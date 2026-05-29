@@ -140,17 +140,20 @@ app.add_middleware(
 
 # ---------------------------------------------------------------------------
 # Endpoints that do NOT require the session token.  Everything else under
-# /api/ is gated by the auth middleware below.  Keep this list minimal —
-# only truly non-sensitive, read-only endpoints belong here.
+# /api/ is gated by the auth middleware below.
+#
+# This list is defined in ``hermes_cli.dashboard_auth.public_paths`` so the
+# OAuth gate middleware can honour the same allowlist — keeping the two
+# gates in lockstep avoids drift like the wildcard-subdomain regression
+# where ``/api/status`` was public under the legacy gate but 401'd under
+# the OAuth gate (breaking the portal's liveness probe).
+#
+# Keep the upstream list minimal — only truly non-sensitive, read-only
+# endpoints belong there.
 # ---------------------------------------------------------------------------
-_PUBLIC_API_PATHS: frozenset = frozenset({
-    "/api/status",
-    "/api/config/defaults",
-    "/api/config/schema",
-    "/api/model/info",
-    "/api/dashboard/themes",
-    "/api/dashboard/plugins",
-})
+from hermes_cli.dashboard_auth.public_paths import (
+    PUBLIC_API_PATHS as _PUBLIC_API_PATHS,
+)
 
 
 def _has_valid_session_token(request: Request) -> bool:
@@ -3020,8 +3023,7 @@ async def _start_device_code_flow(provider_id: str) -> Dict[str, Any]:
     """
     if provider_id == "nous":
         from hermes_cli.auth import (
-            _nous_device_scope_with_env_override,
-            _request_nous_device_code_with_scope_fallback,
+            _request_device_code,
             PROVIDER_REGISTRY,
         )
         import httpx
@@ -3033,22 +3035,21 @@ async def _start_device_code_flow(provider_id: str) -> Dict[str, Any]:
             or pconfig.portal_base_url
         ).rstrip("/")
         client_id = pconfig.client_id
-        scope, explicit_scope = _nous_device_scope_with_env_override(
-            None,
-            default_scope=pconfig.scope,
-        )
+        scope = pconfig.scope
 
         def _do_nous_device_request():
             with httpx.Client(
                 timeout=httpx.Timeout(15.0),
                 headers={"Accept": "application/json"},
             ) as client:
-                return _request_nous_device_code_with_scope_fallback(
-                    client=client,
-                    portal_base_url=portal_base_url,
-                    client_id=client_id,
-                    scope=scope,
-                    allow_legacy_fallback=not explicit_scope,
+                return (
+                    _request_device_code(
+                        client=client,
+                        portal_base_url=portal_base_url,
+                        client_id=client_id,
+                        scope=scope,
+                    ),
+                    scope,
                 )
 
         device_data, effective_scope = await asyncio.get_running_loop().run_in_executor(
@@ -3201,7 +3202,6 @@ async def _start_device_code_flow(provider_id: str) -> Dict[str, Any]:
 def _nous_poller(session_id: str) -> None:
     """Background poller that drives a Nous device-code flow to completion."""
     from hermes_cli.auth import (
-        NOUS_INFERENCE_AUTH_MODE_FRESH,
         _poll_for_token,
         refresh_nous_oauth_from_state,
     )
@@ -3230,7 +3230,7 @@ def _nous_poller(session_id: str) -> None:
                 expires_in=expires_in,
                 poll_interval=interval,
             )
-        # Same post-processing as _nous_device_code_login (mint agent key)
+        # Same post-processing as _nous_device_code_login (validate/refresh JWT)
         now = datetime.now(timezone.utc)
         token_ttl = int(token_data.get("expires_in") or 0)
         auth_state = {
@@ -3253,10 +3253,8 @@ def _nous_poller(session_id: str) -> None:
         }
         full_state = refresh_nous_oauth_from_state(
             auth_state,
-            min_key_ttl_seconds=300,
             timeout_seconds=15.0,
             force_refresh=False,
-            inference_auth_mode=NOUS_INFERENCE_AUTH_MODE_FRESH,
         )
         from hermes_cli.auth import persist_nous_credentials
 
@@ -4577,7 +4575,7 @@ async def get_models_analytics(days: int = 30):
 # The endpoint spawns the same ``hermes --tui`` binary the CLI uses, behind
 # a POSIX pseudo-terminal, and forwards bytes + resize escapes across a
 # WebSocket.  The browser renders the ANSI through xterm.js (see
-# apps/dashboard/src/pages/ChatPage.tsx).
+# web/src/pages/ChatPage.tsx).
 #
 # Auth: ``?token=<session_token>`` query param (browsers can't set
 # Authorization on the WS upgrade).  Same ephemeral ``_SESSION_TOKEN`` as
@@ -4586,7 +4584,6 @@ async def get_models_analytics(days: int = 30):
 # ---------------------------------------------------------------------------
 
 import re
-import asyncio
 
 # PTY bridge is POSIX-only (depends on fcntl/termios/ptyprocess).  On native
 # Windows the import raises; catch and leave PtyBridge=None so the rest of
@@ -5222,7 +5219,7 @@ def mount_spa(application: FastAPI):
         async def no_frontend(full_path: str):
             return JSONResponse(
                 {
-                    "error": "Frontend not built. Run: cd apps/dashboard && npm run build"
+                    "error": "Frontend not built. Run: cd web && npm run build"
                 },
                 status_code=404,
             )
@@ -5325,7 +5322,7 @@ def mount_spa(application: FastAPI):
 # ---------------------------------------------------------------------------
 
 # Built-in dashboard themes — label + description only.  The actual color
-# definitions live in the frontend (apps/dashboard/src/themes/presets.ts).
+# definitions live in the frontend (web/src/themes/presets.ts).
 _BUILTIN_DASHBOARD_THEMES = [
     {
         "name": "default",
@@ -5650,7 +5647,7 @@ async def get_dashboard_themes():
     """Return available themes and the currently active one.
 
     Built-in entries ship name/label/description only (the frontend owns
-    their full definitions in `apps/dashboard/src/themes/presets.ts`).  User themes
+    their full definitions in `web/src/themes/presets.ts`).  User themes
     from `~/.hermes/dashboard-themes/*.yaml` ship with their full
     normalised definition under `definition`, so the client can apply
     them without a stub.
