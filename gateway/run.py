@@ -7743,6 +7743,21 @@ class GatewayRunner:
         if canonical == "status":
             return await self._handle_status_command(event)
 
+        if canonical == "james":
+            return self._james_help_text()
+
+        if canonical == "licenca":
+            return await self._handle_james_vehicle_direct_command(event, "licenciamento")
+
+        if canonical == "transferencia":
+            return await self._handle_james_vehicle_direct_command(event, "transferencia")
+
+        if canonical == "proposta":
+            return await self._handle_james_proposta_command(event)
+
+        if canonical == "status_james":
+            return await self._handle_james_status_direct_command(event)
+
         if canonical == "agents":
             return await self._handle_agents_command(event)
 
@@ -8098,6 +8113,220 @@ class GatewayRunner:
                 self._running_agents_ts.pop(_quick_key, None)
                 if hasattr(self, "_busy_ack_ts"):
                     self._busy_ack_ts.pop(_quick_key, None)
+
+    def _james_help_text(self) -> str:
+        return "\n".join(
+            [
+                "James no Telegram — operação interna/admin",
+                "",
+                "/james — esta ajuda",
+                "/licenca <renavam> — consultar licenciamento pelo adapter local",
+                "/licenciamento <renavam> — alias de /licenca",
+                "/transferencia <renavam> — consultar transferência pelo adapter local",
+                "/status_james — status local de adapter/core/worker",
+                "/proposta <renavam> — rascunhar proposta assistida no Core, sem enviar ao cliente",
+                "",
+                "Sem RENAVAM: peço o dado e paro com llm_calls=0, sem chamada ao Core/adapter.",
+                "Cliente real: bloqueado até gate específico.",
+                "WhatsApp: bloqueado.",
+                "PIX: bloqueado.",
+                "Logs/respostas: RENAVAM, placa, CPF/CNPJ e nome ficam ocultados.",
+            ]
+        )
+
+    async def _james_direct_http_json(
+        self,
+        *,
+        path: str,
+        payload: Optional[Dict[str, Any]] = None,
+        target: str = "adapter",
+    ) -> tuple[int, Dict[str, Any] | None, str]:
+        """Call James 2 local adapter from the gateway without leaking secrets.
+
+        This is intentionally local-only by default.  It uses the same internal
+        auth header as the James containers.  Non-2xx responses are still parsed
+        so the operator sees the real structured error instead of the misleading
+        "adapter did not return JSON" fallback.
+        """
+        import json as _json
+        import urllib.error as _urlerr
+        import urllib.request as _urlreq
+
+        base_env = {
+            "adapter": "JAMES_TELEGRAM_DIRECT_ADAPTER_BASE_URL",
+            "core": "JAMES_TELEGRAM_DIRECT_CORE_BASE_URL",
+            "worker": "JAMES_TELEGRAM_DIRECT_WORKER_BASE_URL",
+        }
+        base_default = {
+            "adapter": "http://127.0.0.1:18085",
+            "core": "http://127.0.0.1:18080",
+            "worker": "http://127.0.0.1:18084",
+        }
+        target_name = target if target in base_default else "adapter"
+        base_url = os.getenv(base_env[target_name], base_default[target_name]).rstrip("/")
+        token = os.getenv("JAMES_TELEGRAM_DIRECT_ADAPTER_INTERNAL_TOKEN") or os.getenv(
+            "JAMES_INTERNAL_AUTH_TOKEN", "local-lab-internal-auth-token"
+        )
+        body = _json.dumps(payload or {}, ensure_ascii=False).encode("utf-8")
+        req = _urlreq.Request(
+            f"{base_url}{path}",
+            data=body,
+            method="POST" if payload is not None else "GET",
+            headers={
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                "X-James-Internal-Token": token,
+            },
+        )
+
+        def _do() -> tuple[int, Dict[str, Any] | None, str]:
+            try:
+                with _urlreq.urlopen(req, timeout=20) as resp:  # noqa: S310 - local operator endpoint
+                    raw = resp.read().decode("utf-8", "replace")
+                    status = int(getattr(resp, "status", 0) or resp.getcode())
+            except _urlerr.HTTPError as exc:
+                status = int(exc.code)
+                raw = exc.read().decode("utf-8", "replace")
+            except Exception as exc:
+                return 0, None, f"{type(exc).__name__}: {exc}"
+            try:
+                parsed = _json.loads(raw) if raw else None
+            except Exception:
+                return status, None, raw[:500]
+            return status, parsed if isinstance(parsed, dict) else None, raw[:500]
+
+        return await asyncio.to_thread(_do)
+
+    def _james_extract_renavam(self, text: str) -> str:
+        raw = (text or "").strip()
+        digits = "".join(ch for ch in raw if ch.isdigit())
+        if not digits:
+            return ""
+        return digits[:11]
+
+    def _james_direct_format_result(self, *, title: str, status: int, data: Dict[str, Any] | None, raw: str) -> str:
+        ok = 200 <= int(status or 0) < 300 and isinstance(data, dict)
+        status_label = "OK" if ok else f"Falha (HTTP {status or 'sem resposta'})"
+        lines = [f"James direto — {title}", f"Status: {status_label}"]
+        if data:
+            erro = data.get("erro") or data.get("error")
+            if erro == "host_real_calls_not_approved":
+                lines.append("Gate: HOST read-only não aprovado no adapter atual.")
+            if erro:
+                lines.append(f"Erro: `{erro}`")
+            status_val = data.get("status")
+            if status_val is not None:
+                lines.append(f"Resultado: `{status_val}`")
+            valor = data.get("valorFinal") or data.get("valor_final") or data.get("total")
+            if valor is not None:
+                lines.append(f"Valor final: `{valor}`")
+            origem = data.get("valorFinalOrigem") or data.get("origem")
+            if origem is not None:
+                lines.append(f"Origem: `{origem}`")
+            if not any(k in data for k in ("erro", "error", "status", "valorFinal", "valor_final", "total", "valorFinalOrigem", "origem")):
+                keys = ", ".join(sorted(str(k) for k in data.keys())[:12])
+                lines.append(f"JSON recebido: chaves `{keys}`")
+        else:
+            lines.append("Resultado: adapter não retornou JSON tratável")
+            if raw:
+                lines.append(f"Detalhe técnico: `{raw[:180]}`")
+        lines.append("Dados sensíveis ocultados: RENAVAM, placa, CPF/CNPJ e nome.")
+        return "\n".join(lines)
+
+    async def _handle_james_vehicle_direct_command(self, event: MessageEvent, service: str) -> str:
+        renavam = self._james_extract_renavam(event.get_command_args())
+        title = "Licenciamento" if service == "licenciamento" else "Transferência"
+        if len(renavam) < 9:
+            cmd = "licenca" if service == "licenciamento" else "transferencia"
+            return (
+                "Me manda o RENAVAM para continuar.\n"
+                f"Exemplo: /{cmd} 123456789\n"
+                "llm_calls=0; sem chamada ao Core/adapter; sem mensagem para cliente."
+            )
+        endpoint = "/api-interna/consultar-licenciamento" if service == "licenciamento" else "/api-interna/consultar-transferencia"
+        status, data, raw = await self._james_direct_http_json(
+            path=endpoint,
+            payload={"renavam": renavam},
+        )
+        return self._james_direct_format_result(title=title, status=status, data=data, raw=raw)
+
+    def _james_proposta_format_result(self, *, status: int, data: Dict[str, Any] | None, raw: str) -> str:
+        ok = 200 <= int(status or 0) < 300 and isinstance(data, dict)
+        status_label = "OK" if ok else f"Falha (HTTP {status or 'sem resposta'})"
+        lines = ["James direto — Proposta assistida", f"Status: {status_label}"]
+        proposta = data.get("proposta") if isinstance(data, dict) else None
+        if isinstance(proposta, dict):
+            estado = proposta.get("estado") or proposta.get("approval_status")
+            servico = proposta.get("servico")
+            valor = proposta.get("valor_cliente_centavos")
+            if estado is not None:
+                lines.append(f"Estado: `{estado}`")
+            if servico is not None:
+                lines.append(f"Serviço: `{servico}`")
+            if valor is not None:
+                lines.append(f"Valor cliente centavos: `{valor}`")
+            side_effects = proposta.get("side_effects") if isinstance(proposta.get("side_effects"), dict) else {}
+            if side_effects.get("pix") == "blocked":
+                lines.append("PIX bloqueado.")
+            if side_effects.get("whatsapp") == "blocked":
+                lines.append("WhatsApp bloqueado.")
+            if side_effects.get("campanha") == "blocked":
+                lines.append("Campanha bloqueada.")
+        elif data:
+            erro = data.get("erro") or data.get("error")
+            if erro:
+                lines.append(f"Erro: `{erro}`")
+        else:
+            lines.append("Resultado: Core não retornou JSON tratável")
+            if raw:
+                lines.append(f"Detalhe técnico: `{raw[:180]}`")
+        lines.append("Envio ao cliente: bloqueado; baixa financeira/PIX: bloqueada.")
+        lines.append("Dados sensíveis ocultados: RENAVAM, placa, CPF/CNPJ e nome.")
+        return "\n".join(lines)
+
+    async def _handle_james_proposta_command(self, event: MessageEvent) -> str:
+        renavam = self._james_extract_renavam(event.get_command_args())
+        if len(renavam) < 9:
+            return (
+                "Me manda o RENAVAM para continuar.\n"
+                "Exemplo: /proposta 123456789\n"
+                "llm_calls=0; sem chamada ao Core/adapter; sem mensagem para cliente; sem WhatsApp; sem PIX."
+            )
+        status, data, raw = await self._james_direct_http_json(
+            target="core",
+            path="/core/propostas/rascunho",
+            payload={"renavam": renavam, "servicos": ["licenciamento"]},
+        )
+        return self._james_proposta_format_result(status=status, data=data, raw=raw)
+
+    async def _handle_james_status_direct_command(self, event: MessageEvent) -> str:
+        import json as _json
+        import urllib.request as _urlreq
+
+        urls = [
+            ("adapter", os.getenv("JAMES_TELEGRAM_DIRECT_ADAPTER_BASE_URL", "http://127.0.0.1:18085").rstrip("/") + "/health"),
+            ("core", os.getenv("JAMES_TELEGRAM_DIRECT_CORE_BASE_URL", "http://127.0.0.1:18080").rstrip("/") + "/health"),
+            ("worker", os.getenv("JAMES_TELEGRAM_DIRECT_WORKER_BASE_URL", "http://127.0.0.1:18084").rstrip("/") + "/health"),
+        ]
+
+        def _probe(url: str) -> tuple[int, str]:
+            try:
+                with _urlreq.urlopen(url, timeout=5) as resp:  # noqa: S310 - local operator endpoint
+                    raw = resp.read().decode("utf-8", "replace")
+                    try:
+                        parsed = _json.loads(raw)
+                        body = parsed.get("status") if isinstance(parsed, dict) else raw[:80]
+                    except Exception:
+                        body = raw[:80]
+                    return int(getattr(resp, "status", 0) or resp.getcode()), str(body)
+            except Exception as exc:
+                return 0, f"{type(exc).__name__}: {exc}"
+
+        results = await asyncio.gather(*[asyncio.to_thread(_probe, url) for _, url in urls])
+        lines = ["James direto — Status local"]
+        for (name, _url), (status, body) in zip(urls, results):
+            lines.append(f"- {name}: HTTP {status or 'sem resposta'} — `{body}`")
+        return "\n".join(lines)
 
     async def _prepare_inbound_message_text(
         self,
