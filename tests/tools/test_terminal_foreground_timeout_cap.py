@@ -216,6 +216,42 @@ class TestForegroundTimeoutCap:
         assert call_kwargs[1]["timeout"] == FOREGROUND_MAX_TIMEOUT
         assert "error" not in result or result["error"] is None
 
+    def test_gateway_session_blocks_delayed_background_gateway_restart(self):
+        """Gateway-originated terminal calls must not self-restart the gateway mid-task."""
+        from tools.terminal_tool import terminal_tool
+
+        with patch("tools.terminal_tool._get_env_config", return_value=_make_env_config()), \
+             patch.dict("os.environ", {"HERMES_GATEWAY_SESSION": "1"}, clear=False):
+            result = json.loads(terminal_tool(
+                command="bash -lc 'sleep 10; systemctl --user restart hermes-gateway'",
+                background=True,
+                timeout=1,
+            ))
+
+        assert result["status"] == "blocked"
+        assert result["exit_code"] == -1
+        assert "active gateway/API session" in result["error"]
+        assert "Gateway shutting down" in result["error"]
+
+    def test_non_gateway_session_allows_gateway_status_command(self):
+        """Read-only/status checks outside gateway context are not blocked by the self-restart guard."""
+        from tools.terminal_tool import terminal_tool
+
+        with patch("tools.terminal_tool._get_env_config", return_value=_make_env_config()), \
+             patch.dict("os.environ", {"HERMES_GATEWAY_SESSION": ""}, clear=False), \
+             patch("tools.terminal_tool._start_cleanup_thread"):
+
+            mock_env = MagicMock()
+            mock_env.execute.return_value = {"output": "active", "returncode": 0}
+
+            with patch("tools.terminal_tool._active_environments", {"default": mock_env}), \
+                 patch("tools.terminal_tool._last_activity", {"default": 0}), \
+                 patch("tools.terminal_tool._check_all_guards", return_value={"approved": True}):
+                result = json.loads(terminal_tool(command="systemctl --user status hermes-gateway"))
+
+        assert result["error"] is None
+        assert mock_env.execute.call_args[0][0] == "systemctl --user status hermes-gateway"
+
 
 class TestForegroundMaxTimeoutConstant:
     """Verify the FOREGROUND_MAX_TIMEOUT constant and schema."""

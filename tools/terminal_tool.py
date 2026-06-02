@@ -1759,6 +1759,57 @@ def _resolve_command_cwd(
     return default_cwd
 
 
+def _is_gateway_tool_context() -> bool:
+    """Return True when a terminal call is running inside a live gateway turn."""
+    if env_var_enabled("HERMES_CRON_SESSION"):
+        return False
+    if env_var_enabled("HERMES_GATEWAY_SESSION"):
+        return True
+    try:
+        from gateway.session_context import get_session_env
+
+        return bool(get_session_env("HERMES_SESSION_PLATFORM", ""))
+    except Exception:
+        return bool(os.getenv("HERMES_SESSION_PLATFORM", ""))
+
+
+def _gateway_self_restart_guard(command: str, env_type: str) -> str | None:
+    """Block terminal commands that would kill the gateway running this turn.
+
+    A gateway-originated terminal command can spawn a delayed/background
+    ``systemctl --user restart hermes-gateway`` and then continue working until
+    the service SIGTERMs the very gateway that owns the active agent. That drops
+    Telegram/API tasks mid-flight. Gateway restart/stop remains available via
+    explicit operator flows outside the terminal tool (for example the gateway
+    slash command/service manager), but a live agent turn must not self-kill.
+    """
+    if env_type != "local" or not command or not _is_gateway_tool_context():
+        return None
+    if env_var_enabled("HERMES_ALLOW_GATEWAY_SELF_RESTART"):
+        return None
+
+    compact = " ".join(str(command).lower().split())
+
+    targets_gateway_service = bool(re.search(r"\bhermes-gateway(?:\.service)?\b", compact))
+    systemctl_mutates_gateway = bool(
+        targets_gateway_service
+        and re.search(r"\bsystemctl\b", compact)
+        and re.search(r"\b(?:restart|try-restart|reload-or-restart|stop|kill)\s+hermes-gateway(?:\.service)?\b", compact)
+    )
+    hermes_cli_mutates_gateway = bool(
+        re.search(r"\bhermes\s+gateway\s+(?:restart|stop)\b", compact)
+    )
+
+    if systemctl_mutates_gateway or hermes_cli_mutates_gateway:
+        return (
+            "Blocked: this terminal command would stop/restart hermes-gateway from inside "
+            "an active gateway/API session, which interrupts the current task and sends "
+            "'Gateway shutting down' to the user. Finish the task first, then run the "
+            "gateway restart explicitly from an external terminal or gateway control command."
+        )
+    return None
+
+
 def terminal_tool(
     command: str,
     background: bool = False,
@@ -1865,6 +1916,15 @@ def terminal_tool(
                     "error": guidance,
                     "status": "error",
                 }, ensure_ascii=False)
+
+        gateway_self_restart_error = _gateway_self_restart_guard(command, env_type)
+        if gateway_self_restart_error:
+            return json.dumps({
+                "output": "",
+                "exit_code": -1,
+                "error": gateway_self_restart_error,
+                "status": "blocked",
+            }, ensure_ascii=False)
 
         # Start cleanup thread
         _start_cleanup_thread()
