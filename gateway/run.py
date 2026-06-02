@@ -8250,6 +8250,29 @@ class GatewayRunner:
         plate = re.sub(r"[^A-Za-z0-9]", "", str(value or "")).upper()
         return plate if re.fullmatch(r"[A-Z]{3}[0-9][A-Z0-9][0-9]{2}", plate) else ""
 
+    def _james_format_brl_value(self, value: Any) -> str:
+        if value in (None, "") or isinstance(value, bool):
+            return ""
+        try:
+            if isinstance(value, (int, float)):
+                amount = float(value)
+            else:
+                raw = str(value).strip()
+                if not raw:
+                    return ""
+                cleaned = re.sub(r"[^\d,.-]", "", raw)
+                if not cleaned:
+                    return ""
+                if "," in cleaned and "." in cleaned:
+                    cleaned = cleaned.replace(".", "").replace(",", ".")
+                elif "," in cleaned:
+                    cleaned = cleaned.replace(",", ".")
+                amount = float(cleaned)
+        except (TypeError, ValueError):
+            return str(value)
+        reais = f"{amount:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        return f"R$ {reais}"
+
     def _james_direct_format_result(
         self,
         *,
@@ -8282,9 +8305,13 @@ class GatewayRunner:
             status_val = data.get("status")
             if status_val is not None:
                 lines.append(f"Resultado: `{status_val}`")
-            valor = data.get("valorFinal") or data.get("valor_final") or data.get("total")
-            if valor is not None:
-                lines.append(f"Valor final: `{valor}`")
+            valor = self._james_find_first_value(
+                data,
+                {"valorfinal", "valor_final", "valorfinaltransferencia", "valor", "total", "valorcliente", "valor_cliente"},
+            )
+            formatted_value = self._james_format_brl_value(valor)
+            if formatted_value:
+                lines.append(f"Valor final: `{formatted_value}`")
             origem = data.get("valorFinalOrigem") or data.get("origem")
             if origem is not None:
                 lines.append(f"Origem: `{origem}`")

@@ -103,12 +103,35 @@ async def test_james_license_command_uses_direct_adapter_flow(monkeypatch):
     assert calls == [{"path": "/api-interna/consultar-licenciamento", "payload": {"renavam": "123456789"}}]
     assert "James direto — Licenciamento" in result
     assert "Status: OK" in result
-    assert "Valor final: `100.0`" in result
+    assert "Valor final: `R$ 100,00`" in result
     assert "Origem: `daypag_licenciamento`" in result
     assert "RENAVAM: `123456789`" in result
     assert "Placa: `ABC1D23`" in result
     assert "CPF/CNPJ" in result
     assert "Dados sensíveis ocultados" not in result
+
+
+def test_james_direct_formatter_uses_nested_host_value_and_formats_brl():
+    from gateway.run import GatewayRunner
+
+    runner = object.__new__(GatewayRunner)
+    message = runner._james_direct_format_result(
+        title="Transferência",
+        status=200,
+        data={
+            "status": "ok",
+            "modoCt": {"transferencia": {"modoDa": {"valores": {"valorFinalTransferencia": "1.234,56"}}}},
+            "veiculo": {"placa": "abc1d23"},
+            "valorFinalOrigem": "modoCt.transferencia.modoDa.valores.valorFinalTransferencia",
+        },
+        raw="{}",
+        request_payload={"renavam": "00133260860"},
+    )
+
+    assert "RENAVAM: `00133260860`" in message
+    assert "Placa: `ABC1D23`" in message
+    assert "Valor final: `R$ 1.234,56`" in message
+    assert "Valor final: `1.234,56`" not in message
 
 
 @pytest.mark.asyncio
