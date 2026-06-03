@@ -8508,7 +8508,7 @@ class GatewayRunner:
             "worker": "JAMES_TELEGRAM_DIRECT_WORKER_BASE_URL",
         }
         base_default = {
-            "adapter": "http://127.0.0.1:18085",
+            "adapter": "http://127.0.0.1:18083",
             "core": "http://127.0.0.1:18080",
             "worker": "http://127.0.0.1:18084",
         }
@@ -8654,7 +8654,7 @@ class GatewayRunner:
         import urllib.request as _urlreq
 
         urls = [
-            ("adapter", os.getenv("JAMES_TELEGRAM_DIRECT_ADAPTER_BASE_URL", "http://127.0.0.1:18085").rstrip("/") + "/health"),
+            ("adapter", os.getenv("JAMES_TELEGRAM_DIRECT_ADAPTER_BASE_URL", "http://127.0.0.1:18083").rstrip("/") + "/health"),
             ("core", os.getenv("JAMES_TELEGRAM_DIRECT_CORE_BASE_URL", "http://127.0.0.1:18080").rstrip("/") + "/health"),
             ("worker", os.getenv("JAMES_TELEGRAM_DIRECT_WORKER_BASE_URL", "http://127.0.0.1:18084").rstrip("/") + "/health"),
         ]

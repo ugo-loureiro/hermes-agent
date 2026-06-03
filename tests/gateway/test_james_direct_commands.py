@@ -51,10 +51,10 @@ async def test_james_status_direct_command_probes_current_local_ports(monkeypatc
     result = await runner._handle_james_status_direct_command(event)
 
     assert "worker: HTTP 200" in result
-    assert "http://127.0.0.1:18085/health" in seen_urls
+    assert "http://127.0.0.1:18083/health" in seen_urls
     assert "http://127.0.0.1:18080/health" in seen_urls
     assert "http://127.0.0.1:18084/health" in seen_urls
-    assert "http://127.0.0.1:18083/health" not in seen_urls
+    assert "http://127.0.0.1:18085/health" not in seen_urls
     assert "http://127.0.0.1:8700/health" not in seen_urls
 
 
