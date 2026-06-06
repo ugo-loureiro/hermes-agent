@@ -110,6 +110,16 @@ COMMAND_REGISTRY: list[CommandDef] = [
     CommandDef("subgoal", "Add or manage extra criteria on the active goal", "Session",
                args_hint="[text | remove N | clear]"),
     CommandDef("status", "Show session info", "Session"),
+    CommandDef("james", "James: ajuda dos comandos operacionais", "Tools & Skills",
+               gateway_only=True),
+    CommandDef("licenca", "James: consultar licenciamento por RENAVAM pelo fluxo atual", "Tools & Skills",
+               gateway_only=True, aliases=("licenciamento", "licença"), args_hint="<renavam>"),
+    CommandDef("transferencia", "James: consultar transferência por RENAVAM pelo fluxo atual", "Tools & Skills",
+               gateway_only=True, aliases=("transferência",), args_hint="<renavam>"),
+    CommandDef("proposta", "James: rascunhar proposta assistida por RENAVAM", "Tools & Skills",
+               gateway_only=True, args_hint="<renavam>"),
+    CommandDef("status_james", "James: status dos serviços locais", "Tools & Skills",
+               gateway_only=True, aliases=("james-status",)),
     CommandDef("whoami", "Show your slash command access (admin / user)", "Info"),
     CommandDef("profile", "Show active profile name and home directory", "Info"),
     CommandDef("sethome", "Set this chat as the home channel", "Session",
@@ -498,6 +508,8 @@ def telegram_bot_commands() -> list[tuple[str, str]]:
     for cmd in COMMAND_REGISTRY:
         if not _is_gateway_available(cmd, overrides):
             continue
+        if cmd.name in _BOT_COMMAND_MENU_HIDDEN:
+            continue
         # Built-in arg-taking commands are included — their handlers show
         # usage text when invoked without arguments, and hiding them from
         # the menu hurts discoverability (issue #24312).
@@ -511,6 +523,20 @@ def telegram_bot_commands() -> list[tuple[str, str]]:
         if tg_name:
             result.append((tg_name, description))
     return result
+
+
+_BOT_COMMAND_MENU_HIDDEN = frozenset({
+    # Dispatchable when typed manually, but intentionally hidden from capped
+    # platform command menus to keep operational commands discoverable.
+    "start",       # platform handshake; not a user action
+    "topic",       # niche Telegram DM topic control
+    "approve",     # approval flows are prompted/contextual, not menu-driven
+    "deny",
+    "goal",        # long-running goal control is advanced/niche
+    "subgoal",
+})
+
+_SLACK_PRIORITY_ALIASES = frozenset({"reset", "bg", "btw", "q"})
 
 
 _TELEGRAM_MENU_PRIORITY = (
@@ -1073,17 +1099,27 @@ def slack_native_slashes() -> list[tuple[str, str, str]]:
         entries.append((slack_name, desc[:140], hint[:100]))
         seen.add(slack_name)
 
-    # First pass: canonical names (so they win slots if we hit the cap).
+    # First pass: built-in canonical names visible in the Telegram/Bot menu.
+    # Commands hidden from capped menus remain dispatchable via typed slash text
+    # and via the /hermes catch-all, but do not consume Slack's 50 slots.
     for cmd in COMMAND_REGISTRY:
         if not _is_gateway_available(cmd, overrides):
+            continue
+        if cmd.name in _BOT_COMMAND_MENU_HIDDEN:
             continue
         _add(cmd.name, cmd.description, cmd.args_hint or "")
 
-    # Second pass: aliases.
+    # Second pass: high-use aliases.  We deliberately do not include every
+    # alias because canonical command parity plus /hermes must fit under the
+    # Slack cap.
     for cmd in COMMAND_REGISTRY:
         if not _is_gateway_available(cmd, overrides):
             continue
+        if cmd.name in _BOT_COMMAND_MENU_HIDDEN:
+            continue
         for alias in cmd.aliases:
+            if alias not in _SLACK_PRIORITY_ALIASES:
+                continue
             # Skip aliases that only differ from canonical by case/punctuation
             # normalization (already covered by _add dedup).
             _add(alias, f"Alias for /{cmd.name} — {cmd.description}", cmd.args_hint or "")
