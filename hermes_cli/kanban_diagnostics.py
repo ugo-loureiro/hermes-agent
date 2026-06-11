@@ -643,6 +643,12 @@ def _rule_repeated_crashes(task, events, runs, now, cfg) -> list[Diagnostic]:
     ``completed`` means something about the task + profile combo is
     broken (OOM, missing dependency, tool it needs is down).
 
+    Terminal tasks are already operator-resolved. A task may be completed
+    manually after a crash-loop/fix/review path without writing a synthetic
+    ``completed`` row to ``task_runs``; in that case the historical crash
+    run streak should stay in the audit trail, but it must not keep showing
+    as an active board diagnostic.
+
     Threshold: cfg["crash_threshold"] (default 2).
 
     Narrower than ``repeated_failures`` — fires earlier (2 crashes vs 3
@@ -654,6 +660,8 @@ def _rule_repeated_crashes(task, events, runs, now, cfg) -> list[Diagnostic]:
         "failure_threshold",
         cfg.get("spawn_failure_threshold", 3),
     ))
+    if _task_field(task, "status") in {"done", "archived"}:
+        return []
     unified_counter = (
         _task_field(task, "consecutive_failures", 0) or 0
     )
