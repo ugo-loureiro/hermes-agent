@@ -14,6 +14,7 @@ from typing import Any, Callable, cast
 
 from .contracts import Objective, Snapshot, SourceRef
 from .james_readonly import JamesReadOnlyAdapter
+from .module_health import build_module_dashboard
 
 KnowledgeFn = Callable[[str, Any], dict[str, Any]]
 
@@ -74,6 +75,18 @@ class Observer:
         if docker is not None:
             observations["docker_inventory"] = docker
             sources.append(SourceRef("docker ps", "container_inventory", "read_only", 0.8))
+
+        module_dashboard = build_module_dashboard(james_operational, docker)
+        observations["module_supervision"] = module_dashboard
+        observations["global_state"] = {
+            "overall": module_dashboard.get("overall_state"),
+            "executive_summary": module_dashboard.get("executive_summary"),
+            "risks": module_dashboard.get("attention_now", []),
+            "priorities": module_dashboard.get("attention_now", []),
+            "read_only": True,
+            "max_autonomy_without_ugo": module_dashboard.get("benchmark", {}).get("max_autonomy_without_ugo"),
+        }
+        sources.append(SourceRef("James module supervision model", "module_dashboard", "read_only", 0.86))
 
         status = _overall_status(observations)
         return Snapshot(
@@ -144,6 +157,9 @@ def _compact_knowledge(data: dict[str, Any]) -> dict[str, Any]:
 def _overall_status(observations: dict[str, Any]) -> str:
     operational = observations.get("james_operational", {})
     view = operational.get("operational_view", {}) if isinstance(operational, dict) else {}
+    modules = observations.get("module_supervision", {})
+    if isinstance(modules, dict) and modules.get("overall_state") == "degraded":
+        return "degraded"
     if view.get("overall_health") == "degraded":
         return "degraded"
     if operational.get("adapter_errors"):

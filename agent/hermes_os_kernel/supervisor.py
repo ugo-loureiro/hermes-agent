@@ -52,6 +52,22 @@ class Supervisor:
         elif docker_inventory:
             findings.append("Docker inventory unavailable or failed; MCP/runtime inventory remains primary evidence.")
 
+        modules = snapshot.observations.get("module_supervision") or {}
+        if isinstance(modules, dict):
+            findings.extend(_findings_from_module_dashboard(modules))
+            if modules.get("degraded_modules"):
+                status = "attention"
+                risk_level = "R1"
+                recommendations.append("Prioritize degraded modules with read-only evidence; remediation remains dry-run or approval-gated.")
+            if modules.get("requires_approval"):
+                recommendations.append("R2+ module actions require explicit Ugo approval; current maximum remains R1 planning/dry-run.")
+            attention = modules.get("attention_now") or []
+            if attention:
+                recommendations.append("Attention now: " + ", ".join(str(item) for item in attention[:8]))
+            can_wait = modules.get("can_wait") or []
+            if can_wait:
+                recommendations.append("Can wait: " + ", ".join(str(item) for item in can_wait[:8]))
+
         if not recommendations:
             recommendations.append("Proceed with read-only planning and dry-run mapping; no runtime action authorized.")
 
@@ -63,6 +79,28 @@ class Supervisor:
             risk_level=risk_level,
             confidence=min(0.92, snapshot.confidence + 0.04),
         )
+
+
+def _findings_from_module_dashboard(modules: dict[str, Any]) -> list[str]:
+    findings: list[str] = []
+    benchmark = modules.get("benchmark") or {}
+    findings.append(
+        "Module dashboard: "
+        f"{benchmark.get('module_count', 0)} modules; "
+        f"healthy={benchmark.get('healthy_count', 0)}; "
+        f"degraded={benchmark.get('degraded_count', 0)}; "
+        f"critical={benchmark.get('critical_count', 0)}."
+    )
+    findings.append(str(modules.get("executive_summary") or "Module supervision summary unavailable."))
+    if modules.get("containers_with_problem"):
+        findings.append("Containers with problem: " + ", ".join(str(item) for item in modules["containers_with_problem"][:8]))
+    if modules.get("watchers_with_problem"):
+        findings.append("Watchers/modules needing watcher attention: " + ", ".join(str(item) for item in modules["watchers_with_problem"][:8]))
+    if modules.get("workers_with_problem"):
+        findings.append("Workers needing attention: " + ", ".join(str(item) for item in modules["workers_with_problem"][:8]))
+    if modules.get("missing_dependencies"):
+        findings.append("External/boundary dependencies declared: " + ", ".join(str(item) for item in modules["missing_dependencies"][:8]))
+    return findings
 
 
 def _findings_from_operational_view(view: dict[str, Any]) -> list[str]:

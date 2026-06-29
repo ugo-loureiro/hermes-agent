@@ -48,6 +48,28 @@ class Planner:
                 )
             )
 
+        for module_name in _module_priorities(snapshot):
+            steps.append(
+                PlanStep(
+                    step_id=f"module-plan-{_slug(module_name)}",
+                    component="Planner",
+                    description=f"Create a module-specific supervision plan for {module_name}; no execution, no autonomy change.",
+                    dependencies=("review-operational-consistency",),
+                    risk_level="R1",
+                    success_criteria=("Plan is module-scoped", "Actions are observe/plan/dry-run only"),
+                    proposed_action={
+                        "type": "module_plan_dry_run",
+                        "target": module_name,
+                        "tool": "module_supervision_dashboard",
+                        "api": "none",
+                        "mcp": "read_only_if_needed",
+                        "kanban": "read_only_context_only",
+                        "simulated_action": "scope_attention_or_wait_state",
+                        "side_effects": False,
+                    },
+                )
+            )
+
         steps.extend(
             [
                 PlanStep(
@@ -79,6 +101,21 @@ class Planner:
         if review and review.status in {"attention", "blocked"}:
             risks.append("Supervisor found attention/blocker state; all remediation remains recommendation/dry-run until Ugo approves a scoped mission.")
         return Plan(objective=objective, steps=tuple(steps), risks=tuple(risks), sources=tuple(sources), confidence=0.86)
+
+
+def _module_priorities(snapshot: Snapshot | None) -> list[str]:
+    if snapshot is None:
+        return []
+    modules = snapshot.observations.get("module_supervision") or {}
+    if not isinstance(modules, dict):
+        return []
+    attention = [str(item) for item in modules.get("attention_now", [])]
+    wait = [str(item) for item in modules.get("can_wait", [])]
+    return list(dict.fromkeys(attention + wait))[:10]
+
+
+def _slug(value: str) -> str:
+    return "".join(ch.lower() if ch.isalnum() else "-" for ch in value).strip("-")[:48] or "module"
 
 
 def _actionable_findings(review: Review | None) -> list[str]:

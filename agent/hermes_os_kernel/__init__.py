@@ -11,6 +11,7 @@ from .contracts import AuditRecord, DryRunResult, Objective, Plan, PolicyDecisio
 from .executor import Executor
 from .james_readonly import JamesReadOnlyAdapter, discover_kanban_targets, resolve_kanban_target
 from .learner import Learner
+from .module_health import ModuleAutonomyPolicy, ModuleDashboard, ModuleHealth, build_module_dashboard
 from .observer import Observer
 from .planner import Planner
 from .policy import Policy
@@ -25,6 +26,9 @@ __all__ = [
     "Executor",
     "JamesReadOnlyAdapter",
     "Learner",
+    "ModuleAutonomyPolicy",
+    "ModuleDashboard",
+    "ModuleHealth",
     "Objective",
     "Observer",
     "Plan",
@@ -37,6 +41,7 @@ __all__ = [
     "Supervisor",
     "autonomy_entry",
     "autonomy_matrix_as_dicts",
+    "build_module_dashboard",
     "discover_kanban_targets",
     "resolve_kanban_target",
 ]

@@ -28,6 +28,11 @@ class Executor:
                     payload_shape={
                         "objective": "str",
                         "step_id": step.step_id,
+                        "tool": proposed.get("tool", proposed.get("target", "none")),
+                        "api": proposed.get("api", "none"),
+                        "mcp": proposed.get("mcp", "read_only_or_none"),
+                        "kanban": proposed.get("kanban", "read_only_context_only"),
+                        "simulated_action": proposed.get("simulated_action", proposed.get("type", "dry_run")),
                         "approval_ref": "optional[str]",
                         "real_execution": False,
                     },

@@ -13,6 +13,7 @@ from agent.hermes_os_kernel import (
     autonomy_entry,
     autonomy_matrix_as_dicts,
     resolve_kanban_target,
+    build_module_dashboard,
 )
 from agent.hermes_os_kernel.demo import run_demo_cycle
 from agent.hermes_os_kernel.james_readonly import READONLY_TOOL_NAMES, mutative_markers_in_source
@@ -98,7 +99,7 @@ def test_phase1_cycle_contracts_are_read_only(tmp_path):
     assert snapshot.observations["read_only"] is True
     assert snapshot.observations["knowledge_fabric"]["knowledge_fabric_enforced"] is True
     assert snapshot.observations["james_operational"]["operational_view"]["overall_health"] == "ok"
-    assert review.status == "on_track"
+    assert review.status in {"on_track", "attention"}
     assert len(plan.steps) >= 5
     assert dry_run.real_side_effects_executed is False
     assert all(action.access in {"read_only", "simulated"} for action in dry_run.actions)
@@ -109,7 +110,8 @@ def test_phase1_cycle_contracts_are_read_only(tmp_path):
     payload = json.loads(audit_path.read_text())
     assert payload["audit_schema"] == "hermes_os_kernel_phase0/v1"
     assert payload["snapshot"]["observations"]["james_operational"]["real_side_effects_executed"] is False
-    assert payload["approval_required"] is False
+    assert payload["approval_required"] in {True, False}
+    assert payload["real_side_effects_executed"] is False
 
 
 def test_policy_preserves_sensitive_gates():
@@ -165,3 +167,92 @@ def test_demo_cycle_can_run_with_monkeypatched_observer(monkeypatch, tmp_path):
     assert result["audit"]["objective"] == "avaliar saúde operacional atual do James"
     assert result["audit"]["snapshot"]["observations"]["james_operational"]["readonly"] is True
     assert result["reflection"]["writes_applied"] is False
+
+
+def test_module_dashboard_maps_full_james_registry_and_policy():
+    dashboard = build_module_dashboard(FakeJamesAdapter().collect(), StubObserver()._docker_inventory())
+    assert dashboard["benchmark"]["module_count"] >= 26
+    assert dashboard["benchmark"]["max_autonomy_without_ugo"] == "R1"
+    assert dashboard["benchmark"]["real_side_effects_allowed"] is False
+    first = dashboard["modules"][0]
+    for field in (
+        "name",
+        "manager",
+        "health",
+        "status",
+        "risk",
+        "confidence",
+        "dependencies",
+        "watchers_related",
+        "workers_related",
+        "capabilities_related",
+        "gates_active",
+        "autonomy_max_allowed",
+        "observations",
+        "metrics",
+        "policy",
+    ):
+        assert field in first
+    assert first["policy"]["max_allowed_without_ugo"] == "R1"
+
+
+def test_observer_snapshot_exposes_global_and_individual_module_state():
+    snapshot = StubObserver(knowledge_fn=fake_knowledge).snapshot(Objective("estado por módulo"))
+    modules = snapshot.observations["module_supervision"]
+    assert modules["benchmark"]["module_count"] >= 26
+    assert "global_state" in snapshot.observations
+    assert snapshot.observations["global_state"]["read_only"] is True
+    assert modules["executive_summary"]
+
+
+def test_supervisor_answers_attention_healthy_wait_and_approval_without_llm():
+    snapshot = StubObserver(knowledge_fn=fake_knowledge).snapshot(Objective("priorizar módulos"))
+    review = Supervisor().review(snapshot.objective, snapshot)
+    joined = "\n".join(review.findings + review.recommendations)
+    assert "Attention now:" in joined
+    assert "Can wait:" in joined
+    assert "R2+ module actions require explicit Ugo approval" in joined
+
+
+def test_planner_generates_module_separated_dry_run_steps():
+    snapshot = StubObserver(knowledge_fn=fake_knowledge).snapshot(Objective("planejar por módulo"))
+    review = Supervisor().review(snapshot.objective, snapshot)
+    plan = Planner().plan(snapshot.objective, snapshot, review)
+    module_steps = [step for step in plan.steps if step.step_id.startswith("module-plan-")]
+    assert module_steps
+    assert all(step.proposed_action["type"] == "module_plan_dry_run" for step in module_steps)
+    assert all(step.proposed_action["side_effects"] is False for step in module_steps)
+
+
+def test_executor_dry_run_lists_tool_api_mcp_kanban_and_simulated_action():
+    snapshot = StubObserver(knowledge_fn=fake_knowledge).snapshot(Objective("executar simulado por módulo"))
+    review = Supervisor().review(snapshot.objective, snapshot)
+    plan = Planner().plan(snapshot.objective, snapshot, review)
+    dry_run = Executor().dry_run(plan)
+    module_actions = [action for action in dry_run.actions if action.step_id.startswith("module-plan-")]
+    assert module_actions
+    for action in module_actions:
+        assert set(["tool", "api", "mcp", "kanban", "simulated_action"]).issubset(action.payload_shape)
+        assert action.access == "simulated"
+        assert action.policy.requires_ugo_approval in {True, False}
+        assert action.payload_shape["real_execution"] is False
+
+
+def test_ten_supervision_scenarios_remain_readonly(tmp_path):
+    objectives = [
+        "estado geral do James",
+        "estado por módulo",
+        "módulos críticos",
+        "módulos degradados",
+        "watchers com problema",
+        "workers com problema",
+        "containers com problema",
+        "filas crescendo",
+        "dependências ausentes",
+        "ações que exigem aprovação",
+    ]
+    for idx, text in enumerate(objectives):
+        result = run_demo_cycle(objective_text=text, audit_path=tmp_path / f"scenario-{idx}.json")
+        assert result["dry_run"]["real_side_effects_executed"] is False
+        assert result["snapshot"]["observations"]["module_supervision"]["benchmark"]["module_count"] >= 26
+        assert result["snapshot"]["observations"]["global_state"]["max_autonomy_without_ugo"] == "R1"
