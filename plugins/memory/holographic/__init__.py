@@ -38,18 +38,18 @@ logger = logging.getLogger(__name__)
 FACT_STORE_SCHEMA = {
     "name": "fact_store",
     "description": (
-        "Deep structured memory with algebraic reasoning. "
-        "Use alongside the memory tool — memory for always-on context, "
-        "fact_store for deep recall and compositional queries.\n\n"
-        "ACTIONS (simple → powerful):\n"
+        "Deep structured knowledge compatibility adapter. "
+        "Read actions are served exclusively through Hermes Knowledge Fabric; "
+        "explicit write actions, when approved, remain memory persistence operations.\n\n"
+        "ACTIONS:\n"
         "• add — Store a fact the user would expect you to remember.\n"
-        "• search — Keyword lookup ('editor config', 'deploy process').\n"
-        "• probe — Entity recall: ALL facts about a person/thing.\n"
-        "• related — What connects to an entity? Structural adjacency.\n"
-        "• reason — Compositional: facts connected to MULTIPLE entities simultaneously.\n"
-        "• contradict — Memory hygiene: find facts making conflicting claims.\n"
-        "• update/remove/list — CRUD operations.\n\n"
-        "IMPORTANT: Before answering questions about the user, ALWAYS probe or reason first."
+        "• search — Keyword lookup via Knowledge Fabric.\n"
+        "• probe — Entity recall via Knowledge Fabric entity().\n"
+        "• related — Structural adjacency via Knowledge Fabric.\n"
+        "• reason — Compositional recall via Knowledge Fabric reason().\n"
+        "• contradict — Conflict lookup via Knowledge Fabric.\n"
+        "• update/remove/list — compatibility operations.\n\n"
+        "IMPORTANT: For read-only knowledge access prefer the `knowledge` tool; this legacy name is an adapter."
     ),
     "parameters": {
         "type": "object",
@@ -181,42 +181,30 @@ class HolographicMemoryProvider(MemoryProvider):
         self._session_id = session_id
 
     def system_prompt_block(self) -> str:
-        if not self._store:
-            return ""
-        try:
-            total = self._store._conn.execute(
-                "SELECT COUNT(*) FROM facts"
-            ).fetchone()[0]
-        except Exception:
-            total = 0
-        if total == 0:
-            return (
-                "# Holographic Memory\n"
-                "Active. Empty fact store — proactively add facts the user would expect you to remember.\n"
-                "Use fact_store(action='add') to store durable structured facts about people, projects, preferences, decisions.\n"
-                "Use fact_feedback to rate facts after using them (trains trust scores)."
-            )
         return (
-            f"# Holographic Memory\n"
-            f"Active. {total} facts stored with entity resolution and trust scoring.\n"
-            f"Use fact_store to search, probe entities, reason across entities, or add facts.\n"
-            f"Use fact_feedback to rate facts after using them (trains trust scores)."
+            "# Holographic Memory\n"
+            "Active behind Hermes Knowledge Fabric. Use knowledge.search/entity/reason/explain "
+            "for read-only recall. Explicit fact writes, when available, remain a separate "
+            "memory persistence path."
         )
 
     def prefetch(self, query: str, *, session_id: str = "") -> str:
-        if not self._retriever or not query:
+        if not query:
             return ""
         try:
-            results = self._retriever.search(query, min_trust=self._min_trust, limit=5)
+            from agent.knowledge_fabric_bridge import knowledge_call
+
+            data = knowledge_call("search", query, limit=5)
+            results = data.get("results", [])
             if not results:
                 return ""
             lines = []
-            for r in results:
-                trust = r.get("trust_score", r.get("trust", 0))
-                lines.append(f"- [{trust:.1f}] {r.get('content', '')}")
-            return "## Holographic Memory\n" + "\n".join(lines)
+            for r in results[:5]:
+                score = r.get("aggregate_score") or r.get("confidence") or 0
+                lines.append(f"- [{float(score):.2f}] {r.get('content', '')}")
+            return "## Knowledge Fabric Recall\n" + "\n".join(lines)
         except Exception as e:
-            logger.debug("Holographic prefetch failed: %s", e)
+            logger.debug("Knowledge Fabric prefetch failed: %s", e)
             return ""
 
     def sync_turn(self, user_content: str, assistant_content: str, *, session_id: str = "") -> None:
@@ -270,8 +258,12 @@ class HolographicMemoryProvider(MemoryProvider):
     def _handle_fact_store(self, args: dict) -> str:
         try:
             action = args["action"]
+            if action in {"search", "probe", "related", "reason", "contradict", "list"}:
+                from agent.knowledge_fabric_bridge import fact_store_read_adapter
+
+                return fact_store_read_adapter(args)
+
             store = self._store
-            retriever = self._retriever
 
             if action == "add":
                 fact_id = store.add_fact(
@@ -280,49 +272,6 @@ class HolographicMemoryProvider(MemoryProvider):
                     tags=args.get("tags", ""),
                 )
                 return json.dumps({"fact_id": fact_id, "status": "added"})
-
-            elif action == "search":
-                results = retriever.search(
-                    args["query"],
-                    category=args.get("category"),
-                    min_trust=float(args.get("min_trust", self._min_trust)),
-                    limit=int(args.get("limit", 10)),
-                )
-                return json.dumps({"results": results, "count": len(results)})
-
-            elif action == "probe":
-                results = retriever.probe(
-                    args["entity"],
-                    category=args.get("category"),
-                    limit=int(args.get("limit", 10)),
-                )
-                return json.dumps({"results": results, "count": len(results)})
-
-            elif action == "related":
-                results = retriever.related(
-                    args["entity"],
-                    category=args.get("category"),
-                    limit=int(args.get("limit", 10)),
-                )
-                return json.dumps({"results": results, "count": len(results)})
-
-            elif action == "reason":
-                entities = args.get("entities", [])
-                if not entities:
-                    return tool_error("reason requires 'entities' list")
-                results = retriever.reason(
-                    entities,
-                    category=args.get("category"),
-                    limit=int(args.get("limit", 10)),
-                )
-                return json.dumps({"results": results, "count": len(results)})
-
-            elif action == "contradict":
-                results = retriever.contradict(
-                    category=args.get("category"),
-                    limit=int(args.get("limit", 10)),
-                )
-                return json.dumps({"results": results, "count": len(results)})
 
             elif action == "update":
                 updated = store.update_fact(
@@ -337,14 +286,6 @@ class HolographicMemoryProvider(MemoryProvider):
             elif action == "remove":
                 removed = store.remove_fact(int(args["fact_id"]))
                 return json.dumps({"removed": removed})
-
-            elif action == "list":
-                facts = store.list_facts(
-                    category=args.get("category"),
-                    min_trust=float(args.get("min_trust", 0.0)),
-                    limit=int(args.get("limit", 10)),
-                )
-                return json.dumps({"facts": facts, "count": len(facts)})
 
             else:
                 return tool_error(f"Unknown action: {action}")

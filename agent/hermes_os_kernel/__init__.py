@@ -1,0 +1,58 @@
+"""Hermes OS Kernel Phase 0.
+
+Initial reversible foundation for governing James through read-only observation,
+planning, supervision, dry-run execution, learning recommendations, policy gates
+and audit trails. This package is not wired into Hermes runtime dispatch yet.
+"""
+
+from .audit import Audit
+from .autonomy import AUTONOMY_MATRIX, AutonomyMatrixEntry, autonomy_entry, autonomy_matrix_as_dicts
+from .contracts import AuditRecord, DryRunResult, Objective, Plan, PolicyDecision, Reflection, Review, Snapshot
+from .executive_briefing import BRIEFING_SECTIONS, ExecutiveBriefingEngine, ExecutiveDailyBriefing, generate_executive_daily_briefing
+from .executor import Executor
+from .james_readonly import JamesReadOnlyAdapter, discover_kanban_targets, resolve_kanban_target
+from .learner import Learner
+from .module_health import ModuleAutonomyPolicy, ModuleDashboard, ModuleHealth, build_module_dashboard
+from .observer import Observer
+from .opportunity_engine import CapabilityGap, Opportunity, OpportunityEngine, OpportunityReport, detect_opportunities
+from .planner import Planner
+from .policy import Policy
+from .supervisor import Supervisor
+
+__all__ = [
+    "Audit",
+    "AUTONOMY_MATRIX",
+    "AuditRecord",
+    "BRIEFING_SECTIONS",
+    "CapabilityGap",
+    "AutonomyMatrixEntry",
+    "DryRunResult",
+    "ExecutiveBriefingEngine",
+    "ExecutiveDailyBriefing",
+    "Executor",
+    "JamesReadOnlyAdapter",
+    "Learner",
+    "ModuleAutonomyPolicy",
+    "ModuleDashboard",
+    "ModuleHealth",
+    "Objective",
+    "Observer",
+    "Opportunity",
+    "OpportunityEngine",
+    "OpportunityReport",
+    "Plan",
+    "Planner",
+    "Policy",
+    "PolicyDecision",
+    "Reflection",
+    "Review",
+    "Snapshot",
+    "Supervisor",
+    "autonomy_entry",
+    "autonomy_matrix_as_dicts",
+    "build_module_dashboard",
+    "detect_opportunities",
+    "discover_kanban_targets",
+    "generate_executive_daily_briefing",
+    "resolve_kanban_target",
+]

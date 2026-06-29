@@ -153,7 +153,7 @@ MEMORY_GUIDANCE = (
     "that prevents the user from having to correct or remind you again. "
     "User preferences and recurring corrections matter more than procedural task details.\n"
     "Do NOT save task progress, session outcomes, completed-work logs, or temporary TODO "
-    "state to memory; use session_search to recall those from past transcripts. "
+    "state to memory; use Knowledge Fabric (`knowledge.search` when available; legacy `session_search` is only a compatibility adapter) to recall those from past transcripts. "
     "Specifically: do not record PR numbers, issue numbers, commit SHAs, 'fixed bug X', "
     "'submitted PR Y', 'Phase N done', file counts, or any artifact that will be stale "
     "in 7 days. If a fact will be stale in a week, it does not belong in memory. "
@@ -169,8 +169,10 @@ MEMORY_GUIDANCE = (
 
 SESSION_SEARCH_GUIDANCE = (
     "When the user references something from a past conversation or you suspect "
-    "relevant cross-session context exists, use session_search to recall it before "
-    "asking them to repeat themselves."
+    "relevant cross-session context exists, query the Knowledge Fabric first "
+    "(`knowledge.search`/`knowledge.lookup` when available). The legacy "
+    "session_search tool name is a compatibility adapter and must not be treated "
+    "as direct provider access."
 )
 
 SKILLS_GUIDANCE = (

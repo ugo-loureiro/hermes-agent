@@ -1928,25 +1928,8 @@ def invoke_tool(agent, function_name: str, function_args: dict, effective_task_i
             )
     elif function_name == "session_search":
         def _execute(next_args: dict) -> Any:
-            session_db = agent._get_session_db_for_recall()
-            if not session_db:
-                from hermes_state import format_session_db_unavailable
-                return _finish_agent_tool(json.dumps({"success": False, "error": format_session_db_unavailable()}), next_args)
-            from tools.session_search_tool import session_search as _session_search
-            return _finish_agent_tool(
-                _session_search(
-                    query=next_args.get("query", ""),
-                    role_filter=next_args.get("role_filter"),
-                    limit=next_args.get("limit", 3),
-                    session_id=next_args.get("session_id"),
-                    around_message_id=next_args.get("around_message_id"),
-                    window=next_args.get("window", 5),
-                    sort=next_args.get("sort"),
-                    db=session_db,
-                    current_session_id=agent.session_id,
-                ),
-                next_args,
-            )
+            from agent.knowledge_fabric_bridge import session_search_adapter
+            return _finish_agent_tool(session_search_adapter(next_args), next_args)
     elif function_name == "memory":
         def _execute(next_args: dict) -> Any:
             target = next_args.get("target", "memory")
