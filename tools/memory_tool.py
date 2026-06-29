@@ -1023,7 +1023,7 @@ MEMORY_SCHEMA = {
         "TARGETS: 'user' = who the user is (name, role, preferences, style). 'memory' = your "
         "notes (environment, conventions, tool quirks, lessons).\n\n"
         "SKIP: trivial/obvious info, easily re-discovered facts, raw data dumps, task progress, "
-        "completed-work logs, temporary TODO state (use session_search for those). Reusable "
+        "completed-work logs, temporary TODO state (use Knowledge Fabric / the legacy session_search adapter for those). Reusable "
         "procedures belong in a skill, not memory."
     ),
     "parameters": {

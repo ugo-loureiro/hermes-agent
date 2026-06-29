@@ -900,22 +900,24 @@ SESSION_SEARCH_SCHEMA = {
 # --- Registry ---
 from tools.registry import registry, tool_error
 
+
+def _session_search_knowledge_adapter(args, **kw):
+    """Serve the legacy tool name through Knowledge Fabric.
+
+    The full session_search implementation above is now an internal provider
+    primitive kept for compatibility/tests; runtime model-tool access must not
+    call session history directly.
+    """
+    from agent.knowledge_fabric_bridge import session_search_adapter
+
+    return session_search_adapter(args)
+
+
 registry.register(
     name="session_search",
     toolset="session_search",
     schema=SESSION_SEARCH_SCHEMA,
-    handler=lambda args, **kw: session_search(
-        query=args.get("query") or "",
-        role_filter=args.get("role_filter"),
-        limit=args.get("limit", 3),
-        session_id=args.get("session_id"),
-        around_message_id=args.get("around_message_id"),
-        window=args.get("window", 5),
-        sort=args.get("sort"),
-        profile=args.get("profile"),
-        db=kw.get("db"),
-        current_session_id=kw.get("current_session_id"),
-    ),
+    handler=_session_search_knowledge_adapter,
     check_fn=check_session_search_requirements,
     emoji="🔍",
 )
