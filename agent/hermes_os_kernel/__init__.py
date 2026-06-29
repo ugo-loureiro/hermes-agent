@@ -13,6 +13,7 @@ from .james_readonly import JamesReadOnlyAdapter, discover_kanban_targets, resol
 from .learner import Learner
 from .module_health import ModuleAutonomyPolicy, ModuleDashboard, ModuleHealth, build_module_dashboard
 from .observer import Observer
+from .opportunity_engine import CapabilityGap, Opportunity, OpportunityEngine, OpportunityReport, detect_opportunities
 from .planner import Planner
 from .policy import Policy
 from .supervisor import Supervisor
@@ -21,6 +22,7 @@ __all__ = [
     "Audit",
     "AUTONOMY_MATRIX",
     "AuditRecord",
+    "CapabilityGap",
     "AutonomyMatrixEntry",
     "DryRunResult",
     "Executor",
@@ -31,6 +33,9 @@ __all__ = [
     "ModuleHealth",
     "Objective",
     "Observer",
+    "Opportunity",
+    "OpportunityEngine",
+    "OpportunityReport",
     "Plan",
     "Planner",
     "Policy",
@@ -42,6 +47,7 @@ __all__ = [
     "autonomy_entry",
     "autonomy_matrix_as_dicts",
     "build_module_dashboard",
+    "detect_opportunities",
     "discover_kanban_targets",
     "resolve_kanban_target",
 ]
