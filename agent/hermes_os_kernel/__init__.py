@@ -9,6 +9,7 @@ from .audit import Audit
 from .autonomy import AUTONOMY_MATRIX, AutonomyMatrixEntry, autonomy_entry, autonomy_matrix_as_dicts
 from .contracts import AuditRecord, DryRunResult, Objective, Plan, PolicyDecision, Reflection, Review, Snapshot
 from .executor import Executor
+from .james_readonly import JamesReadOnlyAdapter
 from .learner import Learner
 from .observer import Observer
 from .planner import Planner
@@ -22,6 +23,7 @@ __all__ = [
     "AutonomyMatrixEntry",
     "DryRunResult",
     "Executor",
+    "JamesReadOnlyAdapter",
     "Learner",
     "Objective",
     "Observer",

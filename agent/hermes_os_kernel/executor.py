@@ -1,13 +1,14 @@
-"""Dry-run Executor for Hermes OS Kernel Phase 0."""
+"""Dry-run Executor for Hermes OS Kernel."""
 
 from __future__ import annotations
 
 from .contracts import DryRunAction, DryRunResult, Plan
+from .james_readonly import READONLY_TOOL_NAMES
 from .policy import Policy
 
 
 class Executor:
-    """Maps intended calls but never performs mutative execution in Phase 0."""
+    """Maps intended calls but never performs mutative execution."""
 
     def __init__(self, policy: Policy | None = None) -> None:
         self.policy = policy or Policy()
@@ -21,22 +22,29 @@ class Executor:
             actions.append(
                 DryRunAction(
                     step_id=step.step_id,
-                    would_call=_would_call_for_component(step.component),
+                    would_call=_would_call_for_step(step.component, proposed.get("target", "")),
                     access="read_only" if proposed.get("type") in {"observe", "review", "audit"} else "simulated",
                     policy=policy,
-                    payload_shape={"objective": "str", "step_id": step.step_id, "approval_ref": "optional[str]"},
+                    payload_shape={
+                        "objective": "str",
+                        "step_id": step.step_id,
+                        "approval_ref": "optional[str]",
+                        "real_execution": False,
+                    },
                 )
             )
-        return DryRunResult(objective=plan.objective, actions=tuple(actions), real_side_effects_executed=False, confidence=0.91)
+        return DryRunResult(objective=plan.objective, actions=tuple(actions), real_side_effects_executed=False, confidence=0.92)
 
 
-def _would_call_for_component(component: str) -> str:
+def _would_call_for_step(component: str, target: str) -> str:
     if component == "Observer":
-        return "observer.snapshot() -> Knowledge Fabric + James read-only health/MCP"
+        return "observer.snapshot() -> Knowledge Fabric + JamesReadOnlyAdapter.collect() using " + ", ".join(READONLY_TOOL_NAMES)
     if component == "Supervisor":
-        return "supervisor.review(snapshot)"
+        return "supervisor.review(snapshot) -> no James mutation"
+    if component == "Planner":
+        return f"planner scopes read-only follow-up for {target}; no execution"
     if component == "Executor":
-        return "executor.dry_run(plan) only; no mutative tool call"
+        return "executor.dry_run(plan) only; mutative tools remain listed, not invoked"
     if "Learner" in component or "Audit" in component:
-        return "learner.reflect() + audit.record() without automatic memory writes"
+        return "learner.reflect() + audit.record(snapshot=...) without automatic memory writes"
     return "component contract call"

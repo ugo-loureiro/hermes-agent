@@ -1,13 +1,19 @@
-"""Observer component for Hermes OS Kernel Phase 0."""
+"""Observer component for Hermes OS Kernel.
+
+Phase 1 keeps the Observer strictly read-only while broadening visibility from
+basic health probes to James MCP read-only tools, registries, Kanban snapshots,
+workers/watchers/capabilities, and runtime inventory.
+"""
 
 from __future__ import annotations
 
 import json
 import subprocess
 import urllib.request
-from typing import Any, Callable
+from typing import Any, Callable, cast
 
 from .contracts import Objective, Snapshot, SourceRef
+from .james_readonly import JamesReadOnlyAdapter
 
 KnowledgeFn = Callable[[str, Any], dict[str, Any]]
 
@@ -17,12 +23,19 @@ class Observer:
 
     Public contract: ``observer.snapshot(objective)``.
     The default implementation only uses read-only probes: Knowledge Fabric,
-    local HTTP health endpoints, and optional ``docker ps`` inventory.
+    James MCP read-only tools, local HTTP health endpoints, registries, Kanban
+    read-only snapshots, and optional ``docker ps`` inventory.
     """
 
-    def __init__(self, knowledge_fn: KnowledgeFn | None = None, timeout_seconds: float = 2.0) -> None:
+    def __init__(
+        self,
+        knowledge_fn: KnowledgeFn | None = None,
+        timeout_seconds: float = 2.0,
+        james_adapter: Any | None = None,
+    ) -> None:
         self.knowledge_fn = knowledge_fn
         self.timeout_seconds = timeout_seconds
+        self.james_adapter = james_adapter or JamesReadOnlyAdapter()
 
     def snapshot(self, objective: Objective) -> Snapshot:
         sources: list[SourceRef] = []
@@ -41,21 +54,34 @@ class Observer:
                 observations["knowledge_fabric_error"] = type(exc).__name__
                 sources.append(SourceRef("Knowledge Fabric", "knowledge", "read_only", 0.4, {"error": type(exc).__name__}))
 
+        james_operational = self.james_adapter.collect(kanban_limit=20)
+        observations["james_operational"] = james_operational
+        sources.extend(
+            (
+                SourceRef("James MCP read-only", "mcp", "read_only", 0.88, {"tools": james_operational.get("mcp_tools_available", [])}),
+                SourceRef("James local health/status endpoints", "http", "read_only", 0.85),
+                SourceRef("James registries", "registry", "read_only", 0.84),
+                SourceRef("James Kanban read-only", "kanban", "read_only", 0.8),
+            )
+        )
+
+        # Keep the older direct probes as a secondary compatibility source while
+        # MCP read-only is being adopted. Both are read-only and local only.
         observations["james_health"] = self._james_health()
-        sources.append(SourceRef("James local health endpoints", "http", "read_only", 0.85))
+        sources.append(SourceRef("Hermes direct James health compatibility probe", "http", "read_only", 0.75))
 
         docker = self._docker_inventory()
         if docker is not None:
             observations["docker_inventory"] = docker
             sources.append(SourceRef("docker ps", "container_inventory", "read_only", 0.8))
 
-        status = "ok" if _all_required_health_ok(observations["james_health"]) else "degraded"
+        status = _overall_status(observations)
         return Snapshot(
             objective=objective,
-            status=status,
+            status=cast(Any, status),
             observations=observations,
             sources=tuple(sources),
-            confidence=0.82 if status == "ok" else 0.68,
+            confidence=0.86 if status == "ok" else 0.72 if status == "degraded" else 0.6,
         )
 
     def _james_health(self) -> dict[str, Any]:
@@ -115,6 +141,17 @@ def _compact_knowledge(data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _all_required_health_ok(health: dict[str, Any]) -> bool:
-    required = ("core", "adapter", "worker", "atendimento")
-    return all(bool(health.get(name, {}).get("ok")) for name in required)
+def _overall_status(observations: dict[str, Any]) -> str:
+    operational = observations.get("james_operational", {})
+    view = operational.get("operational_view", {}) if isinstance(operational, dict) else {}
+    if view.get("overall_health") == "degraded":
+        return "degraded"
+    if operational.get("adapter_errors"):
+        return "degraded"
+    health = observations.get("james_health", {})
+    required = ("core", "adapter", "atendimento")
+    if all(bool(health.get(name, {}).get("ok")) for name in required):
+        return "ok"
+    if view:
+        return "ok" if not view.get("pending_detected") else "degraded"
+    return "unknown"

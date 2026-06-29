@@ -48,7 +48,7 @@ def run_demo_cycle(objective_text: str = DEFAULT_OBJECTIVE, *, audit_path: str |
     plan = planner.plan(objective, snapshot, review)
     dry_run = executor.dry_run(plan)
     reflection = learner.reflect(objective, review, dry_run)
-    record = audit.record(plan=plan, review=review, dry_run=dry_run, reflection=reflection, path=audit_path)
+    record = audit.record(plan=plan, review=review, dry_run=dry_run, reflection=reflection, snapshot=snapshot, path=audit_path)
 
     return {
         "objective": objective.text,

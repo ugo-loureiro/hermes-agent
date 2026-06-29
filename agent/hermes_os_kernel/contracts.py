@@ -130,6 +130,7 @@ class Reflection:
 class AuditRecord:
     objective: str
     sources_consulted: tuple[SourceRef, ...]
+    snapshot: Snapshot | None
     plan: Plan
     review: Review
     dry_run: DryRunResult
