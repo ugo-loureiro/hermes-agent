@@ -12,6 +12,7 @@ from agent.hermes_os_kernel import (
     Supervisor,
     autonomy_entry,
     autonomy_matrix_as_dicts,
+    resolve_kanban_target,
 )
 from agent.hermes_os_kernel.demo import run_demo_cycle
 from agent.hermes_os_kernel.james_readonly import READONLY_TOOL_NAMES, mutative_markers_in_source
@@ -134,12 +135,19 @@ def test_autonomy_matrix_has_all_levels_and_phase0_blocks_r5():
 
 
 def test_james_readonly_adapter_declares_expected_tools_and_no_mutative_allowlist():
-    adapter = JamesReadOnlyAdapter(server=None)
+    adapter = JamesReadOnlyAdapter(server=None, prefer_mcp_stdio=False)
     payload = adapter.collect()
     assert payload["readonly"] is True
     assert payload["real_side_effects_executed"] is False
     assert payload["mcp_tools_expected"] == list(READONLY_TOOL_NAMES)
     assert payload["mutative_methods_allowed"] == []
+    assert payload["kanban_target"]["board_slug"] == "james-despachante"
+
+
+def test_kanban_target_prefers_active_james_board():
+    target = resolve_kanban_target()
+    assert target["board_slug"] == "james-despachante"
+    assert target["db_path"].endswith("/kanban/boards/james-despachante/kanban.db")
 
 
 def test_no_mutative_markers_in_readonly_tool_names():

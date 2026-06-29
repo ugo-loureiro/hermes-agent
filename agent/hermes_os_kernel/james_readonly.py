@@ -9,14 +9,22 @@ never starts/restarts containers, and never writes to James.
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
+import subprocess
 import sys
+import textwrap
 import urllib.request
 from pathlib import Path
 from typing import Any, Callable
 
 JAMES_REPO = Path("/home/ugo/ops/james-2")
 REGISTRY_DIR = JAMES_REPO / "docs/james-organization/registries"
+KANBAN_BOARD_ROOT = Path("/home/ugo/.hermes/kanban/boards")
+KANBAN_BOARD_SLUG = "james-despachante"
+KANBAN_DB_ENV = "HERMES_KANBAN_DB"
+KANBAN_ACTIVE_DB = KANBAN_BOARD_ROOT / KANBAN_BOARD_SLUG / "kanban.db"
+KANBAN_LEGACY_EMPTY_DB = Path("/home/ugo/.hermes/kanban.db")
 
 READONLY_TOOL_NAMES = (
     "james_health_summary",
@@ -58,8 +66,6 @@ MUTATIVE_MARKERS = (
     "rebuild",
     "up -d",
     "compose up",
-    "docker start",
-    "docker stop",
     "pix",
     "santander",
     "whatsapp",
@@ -83,12 +89,25 @@ def _safe_import_server() -> Any | None:
 class JamesReadOnlyAdapter:
     """Collects James state through read-only surfaces only."""
 
-    def __init__(self, server: Any | None = None, repo_root: Path = JAMES_REPO) -> None:
+    def __init__(
+        self,
+        server: Any | None = None,
+        repo_root: Path = JAMES_REPO,
+        *,
+        prefer_mcp_stdio: bool = True,
+        kanban_board_slug: str = KANBAN_BOARD_SLUG,
+    ) -> None:
         self.repo_root = repo_root
         self.server = server if server is not None else _safe_import_server()
-        self.transport = "james_python_mcp_functions" if self.server is not None else "local_readonly_fallback"
+        self.prefer_mcp_stdio = prefer_mcp_stdio
+        self.kanban_target = resolve_kanban_target(kanban_board_slug=kanban_board_slug)
+        self.transport = "mcp_real_stdio" if prefer_mcp_stdio else (
+            "james_python_mcp_functions" if self.server is not None else "fallback_local"
+        )
 
     def available_tools(self) -> tuple[str, ...]:
+        if self.prefer_mcp_stdio:
+            return READONLY_TOOL_NAMES
         if self.server is None:
             return READONLY_TOOL_NAMES
         return tuple(name for name in READONLY_TOOL_NAMES if callable(getattr(self.server, name, None)))
@@ -98,28 +117,59 @@ class JamesReadOnlyAdapter:
 
         tools: dict[str, Any] = {}
         errors: dict[str, str] = {}
-        for name in READONLY_TOOL_NAMES:
-            if name == "james_kanban_snapshot_readonly":
-                payload = self._call_tool(name, limit=kanban_limit)
+        source_by_tool: dict[str, str] = {}
+        mcp_meta: dict[str, Any] = {}
+        if self.prefer_mcp_stdio:
+            mcp_result = _collect_via_mcp_stdio(
+                self.repo_root,
+                db_path=self.kanban_target["db_path"],
+                tenant=self.kanban_target["tenant"],
+                limit=kanban_limit,
+            )
+            if mcp_result.get("ok"):
+                tools = mcp_result["tools"]
+                source_by_tool = {name: "mcp_real" for name in tools}
+                mcp_meta = mcp_result
+                self.transport = "mcp_real_stdio"
             else:
-                payload = self._call_tool(name)
-            if isinstance(payload, dict) and payload.get("adapter_error"):
-                errors[name] = str(payload.get("adapter_error"))
-            tools[name] = _sanitize(payload)
+                errors["mcp_real_stdio"] = str(mcp_result.get("error") or "mcp_unavailable")
+                self.transport = "fallback_local"
+
+        if not tools:
+            for name in READONLY_TOOL_NAMES:
+                if name == "james_kanban_snapshot_readonly":
+                    payload = self._call_tool(
+                        name,
+                        db_path=self.kanban_target["db_path"],
+                        tenant=self.kanban_target["tenant"],
+                        limit=kanban_limit,
+                    )
+                else:
+                    payload = self._call_tool(name)
+                if isinstance(payload, dict) and payload.get("adapter_error"):
+                    errors[name] = str(payload.get("adapter_error"))
+                tools[name] = _sanitize(payload)
+                source_by_tool[name] = "fallback_local" if self.server is None else "mcp_python_functions"
 
         registries = self._read_optional_registries()
-        consolidated = _consolidate(tools, registries)
+        consolidated = _consolidate(tools, registries, self.kanban_target)
         return {
             "readonly": True,
             "real_side_effects_executed": False,
             "repo_root": str(self.repo_root),
             "mcp_transport": self.transport,
+            "mcp_real_available": bool(mcp_meta.get("ok")),
+            "mcp_real_details": _sanitize(mcp_meta),
             "mcp_tools_expected": list(READONLY_TOOL_NAMES),
             "mcp_tools_available": list(self.available_tools()),
+            "source_by_tool": source_by_tool,
+            "kanban_target": self.kanban_target,
+            "kanban_detected_targets": discover_kanban_targets(),
             "mcp": tools,
             "registries": registries,
             "operational_view": consolidated,
             "adapter_errors": errors,
+            "limitations": _limitations(mcp_meta, self.kanban_target),
             "mutative_methods_allowed": [],
         }
 
@@ -142,6 +192,168 @@ class JamesReadOnlyAdapter:
         for key, path in OPTIONAL_REGISTRY_FILES.items():
             registries[key] = _read_registry_summary(path)
         return registries
+
+
+def _collect_via_mcp_stdio(repo_root: Path, *, db_path: str, tenant: str, limit: int) -> dict[str, Any]:
+    if not (repo_root / "packages/james_mcp_readonly/server.py").exists():
+        return {"ok": False, "error": "james_mcp_readonly_server_missing", "provider": "mcp_real_stdio"}
+    helper = textwrap.dedent(
+        """
+        import asyncio, json
+        from mcp import ClientSession, StdioServerParameters
+        from mcp.client.stdio import stdio_client
+
+        tools = __TOOLS__
+        async def main():
+            params = StdioServerParameters(command='python', args=['-m', 'packages.james_mcp_readonly.server'])
+            async with stdio_client(params) as (read, write):
+                async with ClientSession(read, write) as session:
+                    await session.initialize()
+                    listed = await session.list_tools()
+                    available = sorted(tool.name for tool in listed.tools)
+                    payloads = {}
+                    for name in tools:
+                        args = {}
+                        if name == 'james_kanban_snapshot_readonly':
+                            args = {'db_path': __DB_PATH__, 'tenant': __TENANT__, 'limit': __LIMIT__}
+                        result = await session.call_tool(name, args)
+                        if result.content:
+                            first = result.content[0]
+                            text = getattr(first, 'text', None)
+                            payloads[name] = json.loads(text) if text else {'readonly': True, 'ok': True}
+                        else:
+                            payloads[name] = {'readonly': True, 'ok': True}
+                    print(json.dumps({'ok': True, 'provider': 'mcp_real_stdio', 'available_tools': available, 'tools': payloads}, ensure_ascii=False, sort_keys=True))
+        asyncio.run(main())
+        """
+    )
+    helper = helper.replace("__TOOLS__", repr(list(READONLY_TOOL_NAMES)))
+    helper = helper.replace("__DB_PATH__", repr(db_path))
+    helper = helper.replace("__TENANT__", repr(tenant))
+    helper = helper.replace("__LIMIT__", repr(max(1, min(int(limit), 100))))
+    env = {key: value for key, value in os.environ.items() if key in {"PATH", "HOME", "USER", "LANG", "LC_ALL", "TERM", "SHELL", "TMPDIR"} or key.startswith("XDG_")}
+    try:
+        proc = subprocess.run(
+            ["uv", "run", "python", "-c", helper],
+            cwd=str(repo_root),
+            env=env,
+            text=True,
+            capture_output=True,
+            timeout=45,
+            check=False,
+        )
+    except Exception as exc:
+        return {"ok": False, "error": type(exc).__name__, "provider": "mcp_real_stdio"}
+    if proc.returncode != 0:
+        return {
+            "ok": False,
+            "error": "mcp_stdio_call_failed",
+            "returncode": proc.returncode,
+            "stderr_tail": proc.stderr[-1000:],
+            "provider": "mcp_real_stdio",
+        }
+    try:
+        parsed = json.loads(proc.stdout.strip().splitlines()[-1])
+    except Exception as exc:
+        return {"ok": False, "error": type(exc).__name__, "stdout_tail": proc.stdout[-1000:], "provider": "mcp_real_stdio"}
+    parsed["tools"] = _sanitize(parsed.get("tools", {}))
+    parsed["command"] = "uv run python -m packages.james_mcp_readonly.server via MCP stdio client"
+    return parsed
+
+
+def resolve_kanban_target(*, kanban_board_slug: str = KANBAN_BOARD_SLUG) -> dict[str, Any]:
+    env_db = os.environ.get(KANBAN_DB_ENV)
+    candidates = []
+    if env_db:
+        candidates.append(("env", Path(env_db)))
+    candidates.append(("board_slug", KANBAN_BOARD_ROOT / kanban_board_slug / "kanban.db"))
+    candidates.append(("legacy_empty", KANBAN_LEGACY_EMPTY_DB))
+    for source, path in candidates:
+        if path.exists() and _kanban_task_count(path) > 0:
+            return {
+                "board_slug": kanban_board_slug,
+                "tenant": KANBAN_BOARD_SLUG,
+                "db_path": str(path),
+                "source": source,
+                "task_count": _kanban_task_count(path),
+                "status_counts": _kanban_distribution(path, "status"),
+                "tenant_counts": _kanban_distribution(path, "tenant"),
+            }
+    path = KANBAN_BOARD_ROOT / kanban_board_slug / "kanban.db"
+    return {
+        "board_slug": kanban_board_slug,
+        "tenant": KANBAN_BOARD_SLUG,
+        "db_path": str(path),
+        "source": "board_slug_empty_or_missing",
+        "task_count": _kanban_task_count(path),
+        "status_counts": _kanban_distribution(path, "status"),
+        "tenant_counts": _kanban_distribution(path, "tenant"),
+    }
+
+
+def discover_kanban_targets() -> list[dict[str, Any]]:
+    targets: list[dict[str, Any]] = []
+    if KANBAN_BOARD_ROOT.exists():
+        for db_path in sorted(KANBAN_BOARD_ROOT.glob("*/kanban.db")):
+            targets.append(
+                {
+                    "board_slug": db_path.parent.name,
+                    "db_path": str(db_path),
+                    "task_count": _kanban_task_count(db_path),
+                    "status_counts": _kanban_distribution(db_path, "status"),
+                    "tenant_counts": _kanban_distribution(db_path, "tenant"),
+                }
+            )
+    if KANBAN_LEGACY_EMPTY_DB.exists():
+        targets.append(
+            {
+                "board_slug": "legacy_root",
+                "db_path": str(KANBAN_LEGACY_EMPTY_DB),
+                "task_count": _kanban_task_count(KANBAN_LEGACY_EMPTY_DB),
+                "status_counts": _kanban_distribution(KANBAN_LEGACY_EMPTY_DB, "status"),
+                "tenant_counts": _kanban_distribution(KANBAN_LEGACY_EMPTY_DB, "tenant"),
+            }
+        )
+    return targets
+
+
+def _kanban_task_count(path: Path) -> int:
+    try:
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        count = conn.execute("SELECT count(*) FROM tasks").fetchone()[0]
+        return int(count)
+    except sqlite3.Error:
+        return 0
+    finally:
+        try:
+            conn.close()  # type: ignore[name-defined]
+        except Exception:
+            pass
+
+
+def _kanban_distribution(path: Path, column: str) -> dict[str, int]:
+    if column not in {"status", "tenant", "assignee"}:
+        return {}
+    try:
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        rows = conn.execute(f"SELECT {column}, count(*) FROM tasks GROUP BY {column}").fetchall()
+        return {str(key): int(value) for key, value in rows}
+    except sqlite3.Error:
+        return {}
+    finally:
+        try:
+            conn.close()  # type: ignore[name-defined]
+        except Exception:
+            pass
+
+
+def _limitations(mcp_meta: dict[str, Any], kanban_target: dict[str, Any]) -> list[str]:
+    limits: list[str] = []
+    if not mcp_meta.get("ok"):
+        limits.append("mcp_real_unavailable_fallback_local_used")
+    if kanban_target.get("task_count", 0) == 0:
+        limits.append("kanban_target_empty_or_missing")
+    return limits
 
 
 def _fallback_tool(name: str, repo_root: Path, **kwargs: Any) -> dict[str, Any]:
@@ -203,7 +415,11 @@ def _fallback_tool(name: str, repo_root: Path, **kwargs: Any) -> dict[str, Any]:
             "fallback": True,
         }
     if name == "james_kanban_snapshot_readonly":
-        return _fallback_kanban(kwargs.get("limit", 20))
+        return _fallback_kanban(
+            kwargs.get("limit", 20),
+            db_path=kwargs.get("db_path"),
+            tenant=kwargs.get("tenant", KANBAN_BOARD_SLUG),
+        )
     if name == "james_modules_registry_readonly":
         return _fallback_modules_registry(repo_root)
     return {"readonly": True, "ok": False, "adapter_error": "fallback_tool_unknown"}
@@ -231,8 +447,8 @@ def _fallback_http_get(url: str, timeout: float = 2.0) -> dict[str, Any]:
         return {"readonly": True, "external_side_effects": False, "ok": False, "method": "GET", "url": url, "error": type(exc).__name__, "fallback": True}
 
 
-def _fallback_kanban(limit: int = 20) -> dict[str, Any]:
-    path = Path("/home/ugo/.hermes/kanban.db")
+def _fallback_kanban(limit: int = 20, *, db_path: str | None = None, tenant: str = KANBAN_BOARD_SLUG) -> dict[str, Any]:
+    path = Path(db_path) if db_path else KANBAN_ACTIVE_DB
     uri = f"file:{path}?mode=ro"
     if not path.exists():
         return {"readonly": True, "ok": False, "sqlite_uri": uri, "error": "kanban_db_missing", "tasks": [], "fallback": True}
@@ -242,8 +458,13 @@ def _fallback_kanban(limit: int = 20) -> dict[str, Any]:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
             "SELECT id, title, status, assignee, tenant, priority FROM tasks WHERE tenant = ? ORDER BY priority DESC, id ASC LIMIT ?",
-            ("james-despachante", safe_limit),
+            (tenant, safe_limit),
         ).fetchall()
+        if not rows:
+            rows = conn.execute(
+                "SELECT id, title, status, assignee, tenant, priority FROM tasks ORDER BY priority DESC, id ASC LIMIT ?",
+                (safe_limit,),
+            ).fetchall()
     except sqlite3.Error as exc:
         return {"readonly": True, "ok": False, "sqlite_uri": uri, "error": type(exc).__name__, "tasks": [], "fallback": True}
     finally:
@@ -251,7 +472,14 @@ def _fallback_kanban(limit: int = 20) -> dict[str, Any]:
             conn.close()  # type: ignore[name-defined]
         except Exception:
             pass
-    return {"readonly": True, "ok": True, "sqlite_uri": uri, "tasks": [dict(row) for row in rows], "fallback": True}
+    return {
+        "readonly": True,
+        "ok": True,
+        "sqlite_uri": uri,
+        "tenant": tenant,
+        "tasks": [dict(row) for row in rows],
+        "fallback": True,
+    }
 
 
 def _fallback_modules_registry(repo_root: Path) -> dict[str, Any]:
@@ -332,7 +560,7 @@ def _registry_text_summary(text: str) -> dict[str, Any]:
     }
 
 
-def _consolidate(tools: dict[str, Any], registries: dict[str, Any]) -> dict[str, Any]:
+def _consolidate(tools: dict[str, Any], registries: dict[str, Any], kanban_target: dict[str, Any]) -> dict[str, Any]:
     health = tools.get("james_health_summary", {}) if isinstance(tools.get("james_health_summary"), dict) else {}
     summary = health.get("summary", {}) if isinstance(health.get("summary"), dict) else {}
     modules = tools.get("james_modules_registry_readonly", {})
@@ -367,7 +595,12 @@ def _consolidate(tools: dict[str, Any], registries: dict[str, Any]) -> dict[str,
         "atendimento": tools.get("james_atendimento_status", {}),
         "campaigns": tools.get("james_campaign_center_status", {}),
         "employee_telegram": tools.get("james_employee_telegram_status", {}),
-        "kanban": {"ok": kanban.get("ok") if isinstance(kanban, dict) else False, "task_count": task_count},
+        "kanban": {
+            "ok": kanban.get("ok") if isinstance(kanban, dict) else False,
+            "task_count": task_count,
+            "target": kanban_target,
+            "sqlite_uri": kanban.get("sqlite_uri") if isinstance(kanban, dict) else None,
+        },
         "risks_gates": gates,
         "pending_detected": pending,
     }
