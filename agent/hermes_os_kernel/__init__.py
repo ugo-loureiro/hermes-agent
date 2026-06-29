@@ -8,6 +8,7 @@ and audit trails. This package is not wired into Hermes runtime dispatch yet.
 from .audit import Audit
 from .autonomy import AUTONOMY_MATRIX, AutonomyMatrixEntry, autonomy_entry, autonomy_matrix_as_dicts
 from .contracts import AuditRecord, DryRunResult, Objective, Plan, PolicyDecision, Reflection, Review, Snapshot
+from .executive_briefing import BRIEFING_SECTIONS, ExecutiveBriefingEngine, ExecutiveDailyBriefing, generate_executive_daily_briefing
 from .executor import Executor
 from .james_readonly import JamesReadOnlyAdapter, discover_kanban_targets, resolve_kanban_target
 from .learner import Learner
@@ -22,9 +23,12 @@ __all__ = [
     "Audit",
     "AUTONOMY_MATRIX",
     "AuditRecord",
+    "BRIEFING_SECTIONS",
     "CapabilityGap",
     "AutonomyMatrixEntry",
     "DryRunResult",
+    "ExecutiveBriefingEngine",
+    "ExecutiveDailyBriefing",
     "Executor",
     "JamesReadOnlyAdapter",
     "Learner",
@@ -49,5 +53,6 @@ __all__ = [
     "build_module_dashboard",
     "detect_opportunities",
     "discover_kanban_targets",
+    "generate_executive_daily_briefing",
     "resolve_kanban_target",
 ]
