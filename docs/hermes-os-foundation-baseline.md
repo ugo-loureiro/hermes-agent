@@ -4,8 +4,8 @@
 **Data:** 2026-06-29T08:33:31-03:00
 **Branch de integração:** `foundation/closure-baseline`
 **Destino canônico:** `ugo/main`
-**Commit de integração antes do registro do marco:** `44adc8f0c0cdd4fde569d75d6d047575480d05d2`
-**Commit final do baseline:** o commit que adiciona este documento e fecha o marco.
+**Commit de integração da fundação antes do registro do marco:** `44adc8f0c0cdd4fde569d75d6d047575480d05d2`
+**Commit final do baseline:** registrado no Knowledge Fabric após a última sincronização com `origin/main` e no fechamento operacional desta missão.
 
 ## Decisão
 
