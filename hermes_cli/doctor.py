@@ -2091,7 +2091,7 @@ def run_doctor(args):
     except Exception:
         running_in_container = False
 
-    if running_in_container:
+    if running_in_container and terminal_env == "local":
         # Inside our container the Docker terminal backend is not
         # configured by default (Docker-in-Docker isn't set up); the
         # local backend is the intended one. Skip the noisy "docker

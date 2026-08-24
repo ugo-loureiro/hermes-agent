@@ -517,9 +517,16 @@ class TestPinTransition:
     def test_cache_busting_signature_reflects_pin_peer_name(self, tmp_path, monkeypatch):
         """Gateway agent cache must bust when honcho.json's pinPeerName flips."""
         from gateway.run import GatewayRunner
+        from plugins.memory.honcho import client as honcho_client
 
         cfg_path = tmp_path / "honcho.json"
         monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+        # ``get_hermes_home`` is intentionally cached in normal runtime code;
+        # make this test's temporary profile explicit instead of depending on
+        # import order or a previous profile fixture.
+        monkeypatch.setattr(honcho_client, "get_hermes_home", lambda: tmp_path)
+        monkeypatch.setattr(honcho_client, "_get_default_hermes_home", lambda: tmp_path)
+        GatewayRunner._HONCHO_CACHE_BUSTING_MEMO.clear()
 
         cfg_path.write_text(json.dumps({"apiKey": "k", "peerName": "Igor", "pinPeerName": True}))
         sig_pinned = GatewayRunner._extract_cache_busting_config({"memory": {"provider": "honcho"}})

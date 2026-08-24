@@ -312,7 +312,7 @@ def detect_audio_environment() -> dict:
     # and points PULSE_SERVER / PIPEWIRE_REMOTE at it, audio works fine
     # (issue #21203).  Only block when no forwarding is configured.
     from hermes_constants import is_container
-    if is_container():
+    if is_container() and not termux_capture:
         if has_forwarded_audio:
             notices.append("Running inside container (Docker/Podman/LXC) with host audio forwarding")
         else:

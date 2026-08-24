@@ -79,7 +79,10 @@ class TestCacheFileReadBlocking:
         cache.parent.mkdir(parents=True)
         cache.write_text("{}")
 
-        with patch("agent.file_safety._hermes_home_path", return_value=hermes_home):
+        with (
+            patch("agent.file_safety._hermes_home_path", return_value=hermes_home),
+            patch("agent.file_safety._hermes_root_path", return_value=hermes_home),
+        ):
             error = get_read_block_error(str(cache))
             assert error is not None
             assert "internal Hermes cache" in error
@@ -91,9 +94,28 @@ class TestCacheFileReadBlocking:
         hub.parent.mkdir(parents=True)
         hub.write_text("{}")
 
-        with patch("agent.file_safety._hermes_home_path", return_value=hermes_home):
+        with (
+            patch("agent.file_safety._hermes_home_path", return_value=hermes_home),
+            patch("agent.file_safety._hermes_root_path", return_value=hermes_home),
+        ):
             error = get_read_block_error(str(hub))
             assert error is not None
+
+    def test_global_root_cache_blocked(self, tmp_path):
+        """The global Hermes root remains protected under an active profile."""
+        active_home = tmp_path / "profile-home"
+        global_root = tmp_path / "global-root"
+        cache = global_root / "skills" / ".hub" / "index-cache" / "data.json"
+        cache.parent.mkdir(parents=True)
+        cache.write_text("{}")
+
+        with (
+            patch("agent.file_safety._hermes_home_path", return_value=active_home),
+            patch("agent.file_safety._hermes_root_path", return_value=global_root),
+        ):
+            error = get_read_block_error(str(cache))
+            assert error is not None
+            assert "internal Hermes cache" in error
 
 
 # ---------------------------------------------------------------------------
@@ -109,7 +131,10 @@ class TestCombinedGuards:
         hermes_home = tmp_path / ".hermes"
         hermes_home.mkdir()
 
-        with patch("agent.file_safety._hermes_home_path", return_value=hermes_home):
+        with (
+            patch("agent.file_safety._hermes_home_path", return_value=hermes_home),
+            patch("agent.file_safety._hermes_root_path", return_value=hermes_home),
+        ):
             # Regular project .env should still be blocked
             error = get_read_block_error("/workspace/.env")
             assert error is not None
@@ -125,7 +150,10 @@ class TestCombinedGuards:
         cache.parent.mkdir(parents=True)
         cache.write_text("")
 
-        with patch("agent.file_safety._hermes_home_path", return_value=hermes_home):
+        with (
+            patch("agent.file_safety._hermes_home_path", return_value=hermes_home),
+            patch("agent.file_safety._hermes_root_path", return_value=hermes_home),
+        ):
             error = get_read_block_error(str(cache))
             assert error is not None
             assert "internal Hermes cache" in error

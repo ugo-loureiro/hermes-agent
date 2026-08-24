@@ -154,6 +154,16 @@ def agent_env():
         yield agent, _MockHandler
     finally:
         srv.shutdown()
+        srv.server_close()
+        # Stop and close the async listener before removing its temporary home.
+        # Otherwise its worker can emit into a deleted logs/agent.log while the
+        # next test is already running.
+        try:
+            from hermes_logging import _reset_queued_handlers
+
+            _reset_queued_handlers()
+        except Exception:
+            pass
         shutil.rmtree(test_home, ignore_errors=True)
         if prev_home is None:
             os.environ.pop("HERMES_HOME", None)

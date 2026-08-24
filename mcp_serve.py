@@ -494,9 +494,9 @@ class EventBridge:
         except ImportError:
             db_file = Path(os.environ.get("HERMES_HOME", Path.home() / ".hermes")) / "state.db"
         try:
-            self._state_db_mtime = db_file.stat().st_mtime if db_file.exists() else 0.0
+            self._state_db_mtime = db_file.stat().st_mtime_ns if db_file.exists() else 0
         except OSError:
-            self._state_db_mtime = 0.0
+            self._state_db_mtime = 0
         try:
             self._cached_sessions_index = _load_sessions_index()
         except Exception:
@@ -514,6 +514,9 @@ class EventBridge:
                 latest = max(all_ts)
                 if latest > 0.0:
                     self._last_poll_timestamps[session_key] = latest
+        # Reconcile once after startup even when filesystem timestamp resolution
+        # has not advanced; this catches the first post-baseline message/session.
+        self._state_db_mtime = -1
     def _poll_loop(self):
         """Background loop: poll SessionDB for new messages."""
         db = _get_session_db()
@@ -552,9 +555,9 @@ class EventBridge:
             db_file = Path(os.environ.get("HERMES_HOME", Path.home() / ".hermes")) / "state.db"
 
         try:
-            db_mtime = db_file.stat().st_mtime if db_file.exists() else 0.0
+            db_mtime = db_file.stat().st_mtime_ns if db_file.exists() else 0
         except OSError:
-            db_mtime = 0.0
+            db_mtime = 0
 
         if db_mtime == self._state_db_mtime:
             return  # Nothing changed since last poll — skip entirely

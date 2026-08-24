@@ -744,7 +744,11 @@ def _filter_explicit_provider_rows(rows: list[dict], ctx: ConfigContext) -> list
             # them would defeat their purpose (zero-setup discoverability).
             kept.append(row)
             continue
-        if slug == "anthropic" and _anthropic_oauth_credentials_present():
+        if (
+            slug == "anthropic"
+            and (row.get("authenticated") or row.get("source") == "hermes")
+            and _anthropic_oauth_credentials_present()
+        ):
             # Anthropic OAuth logins (Hermes device flow / Claude Code) are
             # deliberate sign-ins that leave no trace in active_provider,
             # model.provider, or API-key env vars. The strict gate below

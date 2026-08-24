@@ -3471,7 +3471,17 @@ def _compat_runtime_main() -> Optional[Dict[str, Any]]:
     )
     if values == _RUNTIME_MAIN_COMPAT_SNAPSHOT:
         return None
-    return dict(zip(_MAIN_RUNTIME_FIELDS, values))
+    # A legacy caller or test may patch only one compatibility mirror. Return
+    # only fields that actually changed since the last scoped runtime was
+    # recorded; otherwise an old provider/model can leak into a new call and
+    # override the live configuration read by the resolver.
+    return {
+        field: value
+        for field, value, previous in zip(
+            _MAIN_RUNTIME_FIELDS, values, _RUNTIME_MAIN_COMPAT_SNAPSHOT
+        )
+        if value != previous
+    }
 
 
 def _runtime_main_value(field: str) -> Any:
