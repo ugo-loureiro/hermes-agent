@@ -386,7 +386,12 @@ _SLACK_VIA_HERMES_ONLY = frozenset({
     "refine", "review", "pause", "whoami", "platform", "insights", "login",
     # Keep the 50 native Slack slots for the core interactive surface. These lower-frequency
     # administrative/look-up commands remain reachable through `/hermes <command>`.
-    "bundles", "busy", "learn", "memory", "suggestions"})
+    "bundles", "busy", "learn", "memory", "suggestions",
+    # Recovery-only, after a restart lost a turn: `/hermes discard` reaches it.
+    "discard",
+    # One-time answer to the low-disk prompt; `/hermes autoprune on` reaches it.
+    "autoprune",
+})
 
 
 def _sanitize_slack_name(raw: str) -> str:

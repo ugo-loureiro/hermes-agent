@@ -95,6 +95,12 @@ def test_startup_fast_import_weight():
     )
 
 
+# A dead local proxy: every HTTP(S) call (GitHub's API, a git https fetch) fails at once.
+_OFFLINE = {"HTTPS_PROXY": "http://127.0.0.1:9", "HTTP_PROXY": "http://127.0.0.1:9",
+            "https_proxy": "http://127.0.0.1:9", "http_proxy": "http://127.0.0.1:9",
+            "NO_PROXY": "", "no_proxy": ""}
+
+
 def _run_version(env_overrides: dict) -> subprocess.CompletedProcess:
     # These tests exercise startup/output, not remote source discovery. A fresh HERMES_HOME has
     # no six-hour source-check cache, so leaving updates enabled turns each subprocess into a live
@@ -104,7 +110,8 @@ def _run_version(env_overrides: dict) -> subprocess.CompletedProcess:
         config = Path(home) / "config.yaml"
         if not config.exists():
             config.write_text("updates:\n  check: false\n", encoding="utf-8")
-    env = {**os.environ, **env_overrides}
+    # Keep any accidental update probe bounded too: the test assertion is startup, not network.
+    env = {**os.environ, **_OFFLINE, **env_overrides}
     env.pop("HERMES_DEV", None)
     return subprocess.run(
         [sys.executable, "-m", "hermes_cli.main", "--version"],

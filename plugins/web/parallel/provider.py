@@ -26,8 +26,8 @@ def _client(slot: str, cls_name: str) -> Any:
         import parallel  # deliberately lazy
         return getattr(parallel, cls_name)(api_key=api_key)
 
-    # cached_sdk_client checks the key before it ensures the SDK. Without a key,
-    # report the missing credential instead of attempting an install first.
+    # The key is checked before the SDK is ensured (cached_sdk_client): without a key the
+    # error names the key, not an install the user may not be allowed to run.
     return cached_sdk_client(slot, "PARALLEL_API_KEY", _MISSING_KEY, "parallel-web", _factory)
 
 
