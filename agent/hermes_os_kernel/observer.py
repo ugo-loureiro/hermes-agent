@@ -117,6 +117,7 @@ class Observer:
                 check=False,
                 capture_output=True,
                 text=True,
+                stdin=subprocess.DEVNULL,
                 timeout=5,
             )
         except Exception:

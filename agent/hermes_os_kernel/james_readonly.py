@@ -239,6 +239,7 @@ def _collect_via_mcp_stdio(repo_root: Path, *, db_path: str, tenant: str, limit:
             env=env,
             text=True,
             capture_output=True,
+            stdin=subprocess.DEVNULL,
             timeout=45,
             check=False,
         )

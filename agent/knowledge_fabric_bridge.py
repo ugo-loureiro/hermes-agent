@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import logging
 import sys
+from importlib.util import find_spec
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, Iterable, List
@@ -34,10 +35,22 @@ def _hermes_home() -> Path:
 
 
 def _ensure_knowledge_fabric_importable() -> None:
-    candidates = [str(_hermes_home().parent), str(Path.home() / ".hermes")]
+    # Fabric is private and profile-scoped. Falling back to Path.home() crosses an explicit
+    # HERMES_HOME boundary and can expose an operator's knowledge to an isolated worker.
+    candidates = [str(_hermes_home())]
     for candidate in candidates:
         if candidate not in sys.path:
             sys.path.insert(0, candidate)
+
+
+def knowledge_fabric_available() -> bool:
+    """Whether this profile exposes Fabric without constructing a runtime instance."""
+
+    _ensure_knowledge_fabric_importable()
+    try:
+        return find_spec("knowledge_fabric.api.fabric") is not None
+    except (ImportError, ModuleNotFoundError, ValueError):
+        return False
 
 
 def _load_config() -> Dict[str, Any]:

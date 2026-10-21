@@ -11,7 +11,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-import yaml
+import hermes_yaml as yaml
 
 from .contracts import RiskLevel
 from .james_readonly import JAMES_REPO, OPTIONAL_REGISTRY_FILES

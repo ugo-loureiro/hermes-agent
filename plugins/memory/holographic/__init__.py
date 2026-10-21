@@ -95,14 +95,9 @@ FACT_FEEDBACK_SCHEMA = {
 # ---------------------------------------------------------------------------
 
 def _load_plugin_config() -> dict:
-    from hermes_constants import get_hermes_home
-    config_path = get_hermes_home() / "config.yaml"
-    if not config_path.exists():
-        return {}
     try:
-        import yaml
-        with open(config_path, encoding="utf-8-sig") as f:
-            all_config = yaml.safe_load(f) or {}
+        from hermes_cli.config import load_config_readonly
+        all_config = load_config_readonly()
         return cfg_get(all_config, "plugins", "hermes-memory-store", default={}) or {}
     except Exception:
         return {}
@@ -131,17 +126,13 @@ class HolographicMemoryProvider(MemoryProvider):
     def save_config(self, values, hermes_home):
         """Write config to config.yaml under plugins.hermes-memory-store."""
         from pathlib import Path
+        from hermes_cli.config import atomic_config_write, read_user_config_raw
         config_path = Path(hermes_home) / "config.yaml"
         try:
-            import yaml
-            existing = {}
-            if config_path.exists():
-                with open(config_path, encoding="utf-8-sig") as f:
-                    existing = yaml.safe_load(f) or {}
+            existing = read_user_config_raw(config_path)
             existing.setdefault("plugins", {})
             existing["plugins"]["hermes-memory-store"] = values
-            with open(config_path, "w", encoding="utf-8") as f:
-                yaml.dump(existing, f, default_flow_style=False)
+            atomic_config_write(config_path, existing)
         except Exception:
             pass
 
